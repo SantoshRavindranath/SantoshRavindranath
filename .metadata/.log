@@ -1329,3 +1329,9 @@ Caused by: java.lang.NullPointerException
 
 !ENTRY com.google.gwt.eclipse.core 2 0 2016-02-28 19:52:05.891
 !MESSAGE Could not check whether the launch configuration "Santosh" needs the -XstartOnFirstThread argument, assuming it does
+
+!ENTRY com.google.gwt.eclipse.core 2 0 2016-02-28 19:55:31.353
+!MESSAGE Could not check whether the launch configuration "DistributedSource" needs the -XstartOnFirstThread argument, assuming it does
+
+!ENTRY com.google.gwt.eclipse.core 2 0 2016-02-28 19:55:31.377
+!MESSAGE Could not check whether the launch configuration "DistributedSource" needs the -XstartOnFirstThread argument, assuming it does
