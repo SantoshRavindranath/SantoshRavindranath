@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<session version="1.0">
+<refactoring comment="Move &apos;com.adaptavant.crm.service.TaskService.setTimeZoneAndOffset(...)&apos; to &apos;com.adaptavant.crm.util.Utilities&apos;&#x0A;- Original project: &apos;DistributedSource&apos;&#x0A;- Original element: &apos;com.adaptavant.crm.service.TaskService.setTimeZoneAndOffset(...)&apos;&#x0A;- Destination type: &apos;com.adaptavant.crm.util.Utilities&apos;" delegate="false" deprecate="true" description="Move member &apos;setTimeZoneAndOffset&apos;" element1="/src&lt;com.adaptavant.crm.service{TaskService.java[TaskService~setTimeZoneAndOffset~QTask;" flags="589830" id="org.eclipse.jdt.ui.move.static" input="/src&lt;com.adaptavant.crm.util{Utilities.java[Utilities" stamp="1435919430831" version="1.0"/>
+</session>

@@ -1,0 +1,4157 @@
+
+package com.adaptavant.distributedsource.service;
+
+import java.io.IOException;
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.ResourceBundle;
+import java.util.Set;
+import java.util.TimeZone;
+import java.util.concurrent.Future;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.codehaus.jackson.JsonGenerationException;
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.JsonParseException;
+import org.codehaus.jackson.map.JsonMappingException;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+
+import com.adaptavant.distributedsource.dao.ContactDAO;
+import com.adaptavant.distributedsource.dao.ContactMethodDAO;
+import com.adaptavant.distributedsource.dao.ContactSkillSetDAO;
+import com.adaptavant.distributedsource.dao.DataStoreUtil;
+import com.adaptavant.distributedsource.dao.TagDAO;
+import com.adaptavant.distributedsource.objects.Account;
+import com.adaptavant.distributedsource.objects.Brand;
+import com.adaptavant.distributedsource.objects.Contact;
+import com.adaptavant.distributedsource.objects.ContactMethod;
+import com.adaptavant.distributedsource.objects.ContactSkillSet;
+import com.adaptavant.distributedsource.objects.Document;
+import com.adaptavant.distributedsource.objects.Location;
+import com.adaptavant.distributedsource.objects.Registration;
+import com.adaptavant.distributedsource.objects.SearchIndex;
+import com.adaptavant.distributedsource.objects.TagInfo;
+import com.adaptavant.distributedsource.objects.TestNumber;
+import com.adaptavant.distributedsource.util.EmailUtil;
+import com.adaptavant.distributedsource.util.Utilities;
+import com.google.appengine.api.datastore.AsyncDatastoreService;
+import com.google.appengine.api.datastore.DatastoreServiceFactory;
+import com.google.appengine.api.datastore.Entity;
+import com.google.appengine.api.datastore.Key;
+import com.google.appengine.api.datastore.KeyFactory;
+import com.google.appengine.api.datastore.QueryResultIterator;
+import common.util.StringUtil;
+
+public class ContactService {
+	
+	private static final Logger	mLogger	= Logger.getLogger( ContactService.class.getPackage().getName() );
+	private static ResourceBundle rsbAR = ResourceBundle.getBundle( "ApplicationResource" );
+	private static final String	anctAccountID = rsbAR.getString( "answerConnectAccountID" );
+	//private static final String synclioBrandID = "cebcaf0a-7ee9-46dc-aa69-0ed1f610a7aa";
+	private static final String	distributedSourceAccountID = rsbAR.getString( "distributedSourceAccountID" );
+	
+	public static String getTypeIDForContactMethod_v1(String type) {
+		
+		String methodTypeId = null;
+
+		switch(type) {
+			case "phone":
+				methodTypeId = "867d8a67-1d8a-4f4b-a33d-b5c9ab94bb4d";
+				break;
+			case "email":
+				methodTypeId = "e8f41ae1-4ff9-40c4-9a35-3c962952e08a";
+				break;
+			case "fax":
+				methodTypeId = "032159f1-bb48-461d-9c80-46185b587be0";
+				break;
+			case "web":
+				methodTypeId = "f6b195ed-2115-49c8-889b-69f7d6faef65";
+				break;
+			case "sms":
+				methodTypeId = "bce6a5f1-82f6-4e5a-9ef9-bb2d846cd004";
+				break;
+			case "socialid":
+				methodTypeId = "478b44da-5c4b-4bca-8aad-82d432eb8f0c";
+				break;
+			case "email_csvattachment":
+				methodTypeId = "29ef8ff8-caa9-4c33-85d5-b8e356162433";
+				break;
+			case "text":
+				methodTypeId = "a5a88063-76e8-495e-80fe-0d3308fd43ef";
+				break;
+			case "mailtext":
+				methodTypeId = "e21aa193-0d15-4245-abaf-3c85739b85f6";
+				break;
+			case "email_attachment":
+				methodTypeId = "f720667a-ec7e-48df-b433-132d461bd853";
+				break;
+			case "singlepage-mail":
+				methodTypeId = "f524b000-3971-4113-a325-c1ab40c3fdbf";
+				break;
+			case "singlepage-phone":
+				methodTypeId = "0d17b6bf-e72f-484e-b18b-7d414af69be0";
+				break;
+			case "lead_0_cc":
+				methodTypeId = "4e2c879b-1a0c-4ad3-a214-8c53945cef80";
+				break;
+			case "lead_1_cc":
+				methodTypeId = "2e1098c0-86c6-4be3-a1de-21d43aedc747";
+				break;
+			case "lead_2_cc":
+				methodTypeId = "e6a30c73-62ad-461c-bf5d-01df93e95214";
+				break;
+			case "lead_3_cc":
+				methodTypeId = "b32bc44d-f221-4a93-8ff1-abcc6763ccc1";
+				break;
+			case "lead_4_cc":
+				methodTypeId = "b4e61375-477f-44fc-89e1-66c16c63b47d";
+				break;
+			default:
+				break;
+		}
+		
+		return methodTypeId;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static void checkAndLinkOrDelinkContacts_v1(String accountID, Contact contact, List<String> listOfContactIDToLink) throws Exception {
+		
+		String contactID = "";
+		boolean isLinkedContactIDEmpty = false, isContactIDToLinkEmpty = false;
+		Entity entity = null;
+		Iterable<Entity> itr = null;
+		List<String> listOfLinkedContactID = null;
+		List<String> listOfContactID = new ArrayList<String>(), listOfContactIDToRemove = null, listOfDiffContactID = null;
+		List<Entity> listOfContactEntityToLink = null;		
+		Map<String,Entity> map = null;
+		
+		contactID = contact.getID();
+		listOfLinkedContactID = contact.getLinkedContacts();
+		
+		if(listOfContactIDToLink == null || listOfContactIDToLink.isEmpty())
+			isContactIDToLinkEmpty = true;
+		
+		if(listOfLinkedContactID == null || listOfLinkedContactID.isEmpty())
+			isLinkedContactIDEmpty = true;
+			
+		if(isLinkedContactIDEmpty && isContactIDToLinkEmpty)
+			return;
+		
+		if(isLinkedContactIDEmpty && !isContactIDToLinkEmpty) {
+			
+			listOfDiffContactID = new ArrayList<String>(listOfContactIDToLink);			
+			listOfContactID.addAll(listOfDiffContactID);
+			
+		} else if(!isLinkedContactIDEmpty && isContactIDToLinkEmpty) {
+			
+			listOfContactIDToRemove = new ArrayList<String>(listOfLinkedContactID);			
+			listOfContactID.addAll(listOfContactIDToRemove);
+			
+		} else {
+			
+			listOfDiffContactID = new ArrayList<String>(listOfContactIDToLink);
+			listOfDiffContactID.removeAll(listOfLinkedContactID);
+			
+			listOfContactIDToRemove = new ArrayList<String>(listOfLinkedContactID);
+			listOfContactIDToRemove.removeAll(listOfContactIDToLink);
+			
+			listOfContactID.addAll(listOfDiffContactID);
+			listOfContactID.addAll(listOfContactIDToRemove);
+		}
+		
+		listOfContactEntityToLink = getContactEntitiesByKey_v1(listOfContactID);
+		map = new HashMap<String,Entity>();
+		for(Entity entityFromItr1 : listOfContactEntityToLink)
+			map.put(entityFromItr1.getKey().getName(), entityFromItr1);
+		
+		listOfContactEntityToLink = new ArrayList<Entity>();
+				
+		if(listOfDiffContactID != null && !listOfDiffContactID.isEmpty()) {
+			
+			for(String contactIDFromItr1 : listOfDiffContactID) {
+				
+				listOfLinkedContactID = null; entity = null;
+				
+				entity = map.get(contactIDFromItr1);				
+				listOfLinkedContactID = (List<String>) entity.getProperty("linkedContacts");				
+				if(listOfLinkedContactID == null)
+					listOfLinkedContactID = new ArrayList<String>();
+				
+				listOfLinkedContactID.add(contactID);				
+				entity.setProperty("linkedContacts", listOfLinkedContactID);
+				
+				listOfContactEntityToLink.add(entity);
+				map.remove(contactIDFromItr1);
+			}
+		}
+		
+		if(listOfContactIDToRemove != null && !listOfContactIDToRemove.isEmpty()) {
+			
+			for(String contactIDFromItr2 : listOfContactIDToRemove) {
+				
+				listOfLinkedContactID = null; entity = null;
+				
+				entity = map.get(contactIDFromItr2);
+				listOfLinkedContactID = (List<String>) entity.getProperty("linkedContacts");				
+				listOfLinkedContactID.remove(contactID);
+				
+				entity.setProperty("linkedContacts", listOfLinkedContactID);
+				
+				listOfContactEntityToLink.add(entity);
+				map.remove(contactIDFromItr2);
+			}
+		}
+		
+		itr = new ArrayList<Entity>(listOfContactEntityToLink);
+		ContactDAO.persistContactEntities_v1(itr);
+	}
+
+	
+	public static Map<String,Object> importContacts_v1(String appID, StringBuilder requestDetails, String accountID, String contactInfoJSON ) {
+		
+		StringBuilder errorInfo = null;
+		boolean status = false;
+		Contact contact = null, linkedContact = null;
+		List<Registration> registrationObjList = null;
+		List<String> listOfLinkedContactID = null;
+		List<Contact> listOfContact = new ArrayList<Contact>(), contactList = null, updatedContactList = null;
+		List<Map<String,Object>>listOfContactInfo = null, listOfMapOfLinkedContactInfo = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfRegistrations = new HashMap <String , Object>(),
+										mapOfInfo = new HashMap <String , Object>();
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			listOfContactInfo = mapper.readValue( contactInfoJSON , new TypeReference<ArrayList<Map<String,Object>>>(){} );
+			
+			if(listOfContactInfo.isEmpty())
+				throw new NullPointerException("JSON string is empty");
+			
+			contactList = constructContactObjList_v1(accountID, listOfContactInfo);
+			
+			/* Insert Search entry for Contact */
+			SearchService.updateContactIndexList_v1(appID, requestDetails, accountID, contactList);
+			
+			listOfMapOfLinkedContactInfo = checkForContactsToLinkInCreateList_v1(accountID, contactList, listOfContactInfo);
+			
+			int index = 0;
+			
+			for(Map<String,Object> mapOfLinkedContactInfo : listOfMapOfLinkedContactInfo)
+				{
+					if(!mapOfLinkedContactInfo.isEmpty()) {
+						
+						if(mapOfLinkedContactInfo.containsKey("contactToLink")) {
+							linkedContact = (Contact) mapOfLinkedContactInfo.get("contactToLink");
+							
+							/* Insert Search entry for linked Contact */					
+								SearchService.updateContactIndex_v1(appID, requestDetails, accountID, linkedContact);
+							
+							listOfContact.add( linkedContact );
+							
+							listOfLinkedContactID = new ArrayList<String>();
+							listOfLinkedContactID.add(linkedContact.getID());
+							
+							contact = contactList.get( index );
+							contact.setLinkedContacts(listOfLinkedContactID);
+							
+							listOfContact.add( contact );
+						}
+										
+						/*if(mapOfLinkedContactInfo.containsKey("linkedContacts")) 
+							contact.setLinkedContacts((List<String>) mapOfLinkedContactInfo.get("linkedContacts"));*/				
+					}
+					
+					index = index + 1;
+				}
+			
+			if(listOfContact.isEmpty())
+				listOfContact.addAll( contactList );
+			
+			updatedContactList = ContactDAO.updateContact_v1(listOfContact);
+			
+			if(!Utilities.isEmpty( updatedContactList ))
+				{
+					List<String> listOfContactID = null;
+					List<String> linkedContacts = null;
+					String contactID = "", type = "", category = "";
+					
+					for(Contact contactFromItr : updatedContactList)
+						{
+							listOfContactID = new ArrayList <String>();
+							
+							type = contactFromItr.getType();
+							category = contactFromItr.getCategory();
+							
+							if("contact".equalsIgnoreCase( type ) || ("lead".equalsIgnoreCase( type ) && "company".equalsIgnoreCase( category )) )
+								continue;
+							
+							contactID = contactFromItr.getID();
+							
+							linkedContacts = contactFromItr.getLinkedContacts();
+							
+							listOfContactID.add(contactID);
+							
+							if(!Utilities.isEmpty( linkedContacts ))
+								listOfContactID.add(contactFromItr.getLinkedContacts().get( 0 ));
+							
+							mapOfRegistrations.put( contactID , listOfContactID );
+							mapOfInfo.put( "brandID" , contactFromItr.getBrandID() );
+						}
+				}
+			
+			if(!Utilities.isEmpty( mapOfRegistrations ))
+				registrationObjList = RegistrationService.insertRegDetailsForImportedLeads( accountID, mapOfRegistrations , mapOfInfo );
+				
+			SearchService.updateContactDocumentsInIndex(appID, requestDetails, accountID, updatedContactList);
+			
+			status = true;
+			
+		} catch(Exception e) {	
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(contactInfoJSON).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);
+			map.put("contact", updatedContactList);
+		}		
+		return map;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static List<Contact> constructContactObjList_v1( String accountID, List<Map<String,Object>> listOfContactInfo ) throws Exception {
+		
+		List<Contact> contactList = new ArrayList <Contact>();
+		Contact contact = null;
+		
+		if( listOfContactInfo == null || listOfContactInfo.isEmpty() )
+			return contactList;
+		
+		for(Map<String,Object> mapOfContactInfo : listOfContactInfo)
+			{
+				if( Utilities.isEmpty( mapOfContactInfo ) )
+					continue;
+				
+				contact = constructContactObj_v1( accountID , mapOfContactInfo );
+				
+				contactList.add( contact );
+			}
+			
+		return contactList;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static List<Map<String,Object>> checkForContactsToLinkInCreateList_v1(String accountID, List<Contact> contactList, List<Map<String,Object>> listOfContactInfo) 
+																																throws Exception {
+		
+		Contact contact = null, linkedContact = null;
+		List<String> listOfContactIDToLink = null;
+		List<Map<String,Object>> listOfMap = new ArrayList <Map<String,Object>>();
+		Map<String,Object> map = null, mapOfLinkedContactInfo = null;
+		int index = 0;
+		
+		if(listOfContactInfo == null || listOfContactInfo.isEmpty()) 
+			return listOfMap;
+		
+		for(Map<String,Object> mapOfContactInfo : listOfContactInfo)
+			{
+				mapOfLinkedContactInfo = null;
+				map = new HashMap <String , Object>();
+				
+				if(mapOfContactInfo == null || mapOfContactInfo.isEmpty() || !mapOfContactInfo.containsKey("linkedContacts"))
+					{
+						index = index + 1;
+						listOfMap.add( map );
+						continue;
+					}
+				
+				mapOfLinkedContactInfo = (Map<String,Object>) mapOfContactInfo.get("linkedContacts");
+				if(mapOfLinkedContactInfo == null || mapOfLinkedContactInfo.isEmpty())
+					{
+						index = index + 1;
+						listOfMap.add( map );
+						continue;
+					}
+				
+				contact = contactList.get( index );
+				
+				if(mapOfLinkedContactInfo.containsKey("linkContacts")) {
+					
+					/*listOfContactIDToLink = (List<String>) mapOfLinkedContactInfo.get("linkContacts");
+					
+					linkCreatedContactToContact_v1(accountID, contactID, listOfContactIDToLink);
+					map.put("linkedContacts", listOfContactIDToLink);*/
+								
+				} else if(!mapOfLinkedContactInfo.containsKey("linkContacts")){
+
+					linkedContact = constructContactObj_v1(accountID, mapOfLinkedContactInfo);
+					
+					listOfContactIDToLink = new ArrayList<String>();
+					listOfContactIDToLink.add(contact.getID());
+					linkedContact.setLinkedContacts(listOfContactIDToLink);
+					
+					map.put("contactToLink", linkedContact);
+					listOfMap.add( map );
+					
+				}
+				
+				index = index + 1;
+			}
+
+		return listOfMap;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Contact constructContactObj_v1(String accountID, Map<String,Object> mapOfContactInfo) throws Exception {
+		
+		String departmentID = null;
+		List<Map<String,Object>> listOfContactMethodInfoInMap = null, listOfLocationInfoInMap = null;
+		List<ContactMethod> listOfContactMethod = null;
+		List<Location> listOfLocation = null;
+		Contact contact = new Contact();
+		
+		if(Utilities.isEmpty( mapOfContactInfo ))
+			return contact;
+
+		listOfContactMethodInfoInMap = (List<Map<String,Object>>) mapOfContactInfo.get("linkedContactMethods");
+		mapOfContactInfo.remove( "linkedContactMethods" );
+		
+		listOfLocationInfoInMap = (List<Map<String,Object>>) mapOfContactInfo.get("linkedLocations");
+		mapOfContactInfo.remove( "linkedLocations" );
+		
+		Utilities.applyMapOntoInstance( contact , mapOfContactInfo );
+		
+		contact.setAccountID(accountID);
+		
+		departmentID = contact.getDepartmentID();
+		
+		listOfContactMethod = constructContactMethodObj_v1(accountID, departmentID, listOfContactMethodInfoInMap);
+		
+		listOfLocation = constructLocationObj_v1(accountID, departmentID, listOfLocationInfoInMap);
+		
+		if(!Utilities.isEmpty( listOfContactMethod ))
+			contact.setLinkedContactMethods(listOfContactMethod);
+		
+		if(!Utilities.isEmpty( listOfLocation ))
+			contact.setLinkedLocations(listOfLocation);
+		
+		return contact;
+	}
+	
+	public static List<ContactMethod> constructContactMethodObj_v1(String accountID, String departmentID, List<Map<String,Object>> listOfContactMethodInfoInMap) throws Exception {
+	
+		String type = "", value = "";
+		ContactMethod contactMethod = null;
+		List<ContactMethod> listOfContactMethod = new ArrayList<ContactMethod>();
+		
+		if(Utilities.isEmpty( listOfContactMethodInfoInMap ))
+			return listOfContactMethod;
+		
+		for(Map<String,Object> mapOfContactMethodInfo : listOfContactMethodInfoInMap) {
+			
+			contactMethod = new ContactMethod();
+
+			contactMethod.setAccountID(accountID);
+			contactMethod.setDepartmentID(departmentID);
+			
+			Utilities.applyMapOntoInstance( contactMethod , mapOfContactMethodInfo );
+			
+			if(StringUtil.isBlank(contactMethod.getValue()))
+				continue;
+			
+			type = contactMethod.getType();
+			value = contactMethod.getValue();
+			
+			if("authentication".equals(type))
+				value = value.toLowerCase();
+
+			contactMethod.setValue(value);
+			contactMethod.setTypeID( getTypeIDForContactMethod_v1(type) );
+			
+			listOfContactMethod.add(contactMethod);	
+		}		
+		return listOfContactMethod;
+	}
+
+	public static List<Location> constructLocationObj_v1(String accountID, String departmentID, List<Map<String,Object>> listOfLocationInfoInMap) throws Exception {
+	
+		Location location = null;
+		List<Location> listOfLocation = new ArrayList<Location>();
+		
+		if(Utilities.isEmpty( listOfLocationInfoInMap ))
+			return listOfLocation;
+		
+		for(Map<String,Object> mapOfLocationInfo : listOfLocationInfoInMap) {
+			
+			location = new Location();
+			
+			location.setAccountID(accountID);
+			location.setDepartmentID(departmentID);
+			
+			Utilities.applyMapOntoInstance( location , mapOfLocationInfo );
+			
+			listOfLocation.add(location);
+		}		
+		return listOfLocation;
+	}
+	
+	public static List<Entity> getContactEntitiesByKey_v1(List<String> listOfContactID) throws Exception{
+		
+		Key key = null;
+		List<Entity> listOfContactEntities = null;
+		List<Key> listOfKey = null;
+		List<Key> itr = null;
+		Map<Key,Entity> mapOfContactEntity = null;
+		
+		listOfKey = new ArrayList<Key>();
+		for(String contactIDFromItr : listOfContactID) {
+			key = KeyFactory.createKey("Contact", contactIDFromItr);
+			listOfKey.add(key);
+		}
+		
+		itr = new ArrayList<Key>(listOfKey);
+		mapOfContactEntity = DataStoreUtil.getEntitiesUsingKey( itr );
+		
+		if(mapOfContactEntity == null || mapOfContactEntity.isEmpty())
+			return listOfContactEntities;
+		
+		listOfContactEntities = new ArrayList<Entity>();
+		for(Map.Entry<Key,Entity> mapFromItr : mapOfContactEntity.entrySet())
+			listOfContactEntities.add(mapFromItr.getValue());
+		
+		return listOfContactEntities;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static boolean linkCreatedContactToContact_v1(String accountID, String contactID, List<String> listOfContactIDToLink) throws Exception {
+		
+		boolean isUpdated = false;
+		List<Entity> listOfContactEntities = null;
+		List<String> linkedContacts = null;
+		Iterable<Entity> itr = null;
+		
+		listOfContactEntities = getContactEntitiesByKey_v1(listOfContactIDToLink);
+		
+		for(Entity entity : listOfContactEntities) {
+			linkedContacts = (List<String>) entity.getProperty("linkedContacts");
+			if(linkedContacts == null)
+				linkedContacts = new ArrayList<String>();
+			
+			linkedContacts.add(contactID);
+			entity.setProperty("linkedContacts", linkedContacts);
+		}
+		
+		itr = new ArrayList<Entity>(listOfContactEntities);
+		ContactDAO.persistContactEntities_v1(itr);
+		
+		isUpdated = true;
+		
+		return isUpdated;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> checkForContactsToLinkInCreate_v1(String appID, StringBuilder requestDetails, String accountID, String contactID, Map<String,Object> mapOfContactInfo) throws Exception {
+		
+		String brandID = "";
+		Contact linkedContact = null;
+		List<String> listOfContactIDToLink = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfLinkedContactInfo = null;
+		
+		if(mapOfContactInfo == null || mapOfContactInfo.isEmpty() || !mapOfContactInfo.containsKey("linkedContacts")) 
+			return map;
+		
+		mapOfLinkedContactInfo = (Map<String,Object>) mapOfContactInfo.get("linkedContacts");
+		String departmentID = (String) mapOfContactInfo.get("departmentID");
+		
+		if(mapOfLinkedContactInfo == null || mapOfLinkedContactInfo.isEmpty()) 
+			return map;
+		
+		if(mapOfLinkedContactInfo.containsKey("linkContacts")) {
+			
+			listOfContactIDToLink = (List<String>) mapOfLinkedContactInfo.get("linkContacts");
+			
+			linkCreatedContactToContact_v1(accountID, contactID, listOfContactIDToLink);
+			map.put("linkedContacts", listOfContactIDToLink);
+						
+		} else if(!mapOfLinkedContactInfo.containsKey("linkContacts")){
+			
+			brandID = (String) mapOfContactInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID))
+//					throw new NullPointerException("BrandID not sent");
+//			}
+			
+			departmentID = Utilities.correctToNull(departmentID);
+			if(StringUtil.isBlank(departmentID)) {
+				departmentID = Utilities.getDepartmentForApiKey(accountID);				
+			}
+			
+			mapOfLinkedContactInfo.put("departmentID", departmentID);
+			
+			linkedContact = constructContactObj_v1(accountID, mapOfLinkedContactInfo);
+			
+			listOfContactIDToLink = new ArrayList<String>();
+			listOfContactIDToLink.add(contactID);
+			linkedContact.setLinkedContacts(listOfContactIDToLink);
+			
+			insertHistoryForContact( appID , requestDetails , accountID , departmentID , linkedContact, mapOfLinkedContactInfo);
+			
+			map.put("contactToLink", linkedContact);
+		}
+		
+		return map;
+	}
+	
+//	public static Map<String,Object> constructReqFieldsFromLinkedContactObj_v1(List<String> listOfLinkedContactID, 
+//																																Map<String,Entity> mapOfLinkedContactEntity) throws Exception {
+//		
+//		String contactID = "", name = "", category = "";
+//		Entity entity = null;
+//		Map<String,Object> map = new HashMap<String,Object>(), mapOfLinkedContactInfo = null;
+//		
+//		if( listOfLinkedContactID == null || listOfLinkedContactID.isEmpty() )
+//			return map;
+//		
+//		for( String contactIDFromItr : listOfLinkedContactID ) {
+//			
+//			contactID = ""; name = ""; category = "";
+//			mapOfLinkedContactInfo = new HashMap<String,Object>();
+//			
+//			entity = mapOfLinkedContactEntity.get(contactIDFromItr);
+//			contactID = entity.getKey().getName();
+//			name = (String) entity.getProperty("name");
+//			category = ((String) entity.getProperty("category")).toLowerCase();
+//			
+//			mapOfLinkedContactInfo.put("category", category);
+//			mapOfLinkedContactInfo.put("name", name);
+//			mapOfLinkedContactInfo.put("id", contactID);
+//			map.put(contactID, mapOfLinkedContactInfo);
+//		}
+//		
+//		return map;		
+//	}
+
+	//New Changes
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> createContact_v1(String appID, StringBuilder requestDetails, String accountID, String json) {
+		
+		String brandID = "", companyName = null, firstName = null, category = "person", uniqueTabID = null;
+		StringBuilder errorInfo = new StringBuilder();
+		boolean status = false;
+		Contact contact = null, linkedContact = null;
+		List<Contact> listOfContact = new ArrayList<Contact>(); List<String> listOfContactID = new ArrayList<String>();
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactInfo = null, mapOfLinkedContactInfo = null, mapOfLeadRegDetails = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Create Contact --> accountID :" + accountID + " JSON :" + json);
+			
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			
+			try {
+				mapOfContactInfo = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});	
+			} catch(JsonMappingException | JsonParseException jsonExp) {
+				mLogger.log(Level.SEVERE , "\n Create Contact - Error : " + errorInfo, jsonExp);
+				map.put("error", "Not a proper JSON");
+				return map;
+			} catch(IOException io) {
+				mLogger.log(Level.SEVERE , "\n Create Contact - Error : " + errorInfo, io);
+				map.put("error", "Not a proper JSON");							
+				return map;
+			} 
+						
+			if(mapOfContactInfo.isEmpty()) {
+				map.put("error", "JSON string is empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			brandID = (String) mapOfContactInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID)) {
+//					map.put("error", "BrandID not sent");
+//					map.put("success", false);
+//					return map;
+//				}
+//			}
+			
+			if(mapOfContactInfo.containsKey("category") && "Company".equalsIgnoreCase((String)mapOfContactInfo.get("category")))
+				category = "company";
+			
+			//Validate the JSON for fullName
+			if(mapOfContactInfo.containsKey("fullName")) {
+				companyName = (String) mapOfContactInfo.get("fullName");
+				if("company".equalsIgnoreCase(category) && StringUtil.isBlank(companyName)) {
+					map.put("error", "fullName can't be empty or null for company");
+					map.put("success", false);
+					return map;
+				}				
+			}
+			
+			//Validate the JSON for firstName
+			if(mapOfContactInfo.containsKey("firstName")) {
+				firstName = (String) mapOfContactInfo.get("firstName");
+				if("person".equalsIgnoreCase(category) && StringUtil.isBlank(firstName)) {
+					map.put("error", "firstName can't be empty or null for person");
+					map.put("success", false);
+					return map;
+				}
+			}
+			
+			if(mapOfContactInfo.containsKey("uniqueTabID"))
+				uniqueTabID = (String) mapOfContactInfo.get("uniqueTabID");
+			
+			//Previously used brandID for ignoring login & passsword sent from Synclio but now using appID
+			if(!StringUtil.isBlank(appID) && ("live-synclio-backend".equals(appID) || "syncliowww".equals(appID) ||
+															  "newdesign-synclio".equals(appID) || "synclioweb".equals(appID))) {
+				mapOfContactInfo.remove("login");
+				mapOfContactInfo.remove("password");
+			}
+			
+			String departmentID = (String) mapOfContactInfo.get("departmentID");
+			departmentID = Utilities.correctToNull(departmentID);
+			
+			//HardCoding until others implement
+			if(StringUtil.isBlank(departmentID)) {
+				
+				departmentID = Utilities.getDepartmentForApiKey(accountID);
+				if(!StringUtil.isBlank(departmentID))
+					accountID = "SEN42";				
+			}				
+			
+			mapOfContactInfo.put("departmentID", departmentID);
+			
+			contact = constructContactObj_v1(accountID, mapOfContactInfo);
+			
+			mapOfLinkedContactInfo = checkForContactsToLinkInCreate_v1(appID, requestDetails, accountID, contact.getID(), mapOfContactInfo);
+			
+			setLinkedContacts( appID , requestDetails , accountID , mapOfLinkedContactInfo , contact , linkedContact, listOfContact );
+			
+			insertHistoryForContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfo );
+			
+			linkExistingOrNewDocumentToContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfo , map );
+			
+			listOfContact.add(contact);			
+			listOfContact = ContactDAO.insertContact_v1(listOfContact);
+			
+			//add tags
+			addOrRemoveTags( appID , requestDetails , accountID , departmentID , contact.getID() , mapOfContactInfo , map );
+			
+			mLogger.log( java.util.logging.Level.INFO , "is registration key exist : "+mapOfContactInfo.containsKey( "registration" ) );
+			
+			for(Contact lContact: listOfContact)
+				listOfContactID.add( lContact.getID() );
+			
+			//add registration jdo			
+			if( mapOfContactInfo.containsKey( "registration" ) && "lead".equalsIgnoreCase( contact.getType() ) ) {
+				
+				mapOfLeadRegDetails = (Map<String,Object>) mapOfContactInfo.get("registration");
+				
+				if(mapOfLeadRegDetails != null && !mapOfLeadRegDetails.isEmpty()) {
+					
+					if(!StringUtil.isBlank(departmentID))
+						mapOfLeadRegDetails.put("departmentID", departmentID);
+						
+					Registration registrationObj = null;
+					registrationObj = RegistrationService.insertLeadRegDetails(accountID, listOfContactID, mapOfLeadRegDetails);
+					map.put( "registration" , registrationObj );
+				}				
+			}
+			
+			/* Insert Search entry for Contact */
+			SearchService.updateContactIndexList_v1( appID , requestDetails , accountID , listOfContact );
+			SearchService.updateContactDocumentsInIndex(appID,requestDetails,accountID, listOfContact);			
+			
+			for(Contact tempContact: listOfContact) {
+				
+				if(tempContact != null && "person".equals(tempContact.getCategory()) && "lead".equals(tempContact.getType())) {
+					//DistributedSourceService.callUpdateChannelsTask(appID, requestDetails, "lead","add", tempContact.getID(), null, tempContact.getAccountID(), uniqueTabID);
+					DistributedSourceService.callUpdateChannelsTask_v2(appID, requestDetails, "lead","add", 
+																tempContact.getID(), null, tempContact.getAccountID(), departmentID, uniqueTabID);
+				}					
+			}
+			
+			/* To push create contact event to FullSync - changes start */
+				JobService.addFullSyncEventJob("CONTACT", "CREATE", listOfContact);
+			/* To push create contact event to FullSync - changes end */
+			
+			status = true;
+			
+		} catch(Exception e) {						
+			status = false;
+			map.put("error", e.getMessage());
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", status);
+			map.put("contact", listOfContact);
+		}		
+		return map;
+	}
+
+	public static List<ContactMethod> setReqFieldsForContactMethodUpdate_v1( String accountID, String departmentID, List<ContactMethod> listOfContactMethod,
+																			 												List<Map<String, Object>> listOfInfoInMapForUpdate) throws Exception {
+
+		String type = "", value = "", contactMethodID = "";
+		ContactMethod contactMethod = null, contactMethodFromMap = null;
+		List<ContactMethod> listOfUpdatedContactMethod = null;
+		Map<String, ContactMethod> mapOfContactMethodObj = null;
+
+		if (Utilities.isEmpty( listOfInfoInMapForUpdate ))
+			return listOfContactMethod;
+
+		if (!Utilities.isEmpty( listOfContactMethod )) {
+
+			mapOfContactMethodObj = new HashMap<String, ContactMethod>();
+			for (ContactMethod contactMethodFromItr : listOfContactMethod)
+				mapOfContactMethodObj.put(contactMethodFromItr.getID(), contactMethodFromItr);
+		}
+
+		listOfUpdatedContactMethod = new ArrayList<ContactMethod>();
+
+		for (Map<String, Object> mapOfContactMethodInfo : listOfInfoInMapForUpdate) {
+
+			type = ""; value = ""; contactMethod = null; contactMethodFromMap = new ContactMethod();
+
+			Utilities.applyMapOntoInstance( contactMethodFromMap , mapOfContactMethodInfo );
+			
+			contactMethodID = contactMethodFromMap.getID();
+			
+			if (!Utilities.isEmpty( mapOfContactMethodObj ) && mapOfContactMethodObj.containsKey(contactMethodID)) {
+				
+				contactMethod = mapOfContactMethodObj.get(contactMethodID);
+				mapOfContactMethodObj.remove(contactMethodID);
+			} else {
+				
+				contactMethod = new ContactMethod();
+				
+				Utilities.applyMapOntoInstance( contactMethod , mapOfContactMethodInfo );
+				
+				contactMethod.setAccountID(accountID);
+				contactMethod.setDepartmentID(departmentID);
+			}
+			
+			type = contactMethod.getType();
+			value = contactMethod.getValue();
+			
+			if("authentication".equals(type) && !StringUtil.isBlank(value))
+				value = value.toLowerCase();
+			
+			if (contactMethod.isPrimary()) {
+				
+				for (ContactMethod contactMethodFromItr : listOfUpdatedContactMethod)
+					contactMethodFromItr.setPrimary(false);
+
+				if (mapOfContactMethodObj != null && !mapOfContactMethodObj.isEmpty()) {
+					for (Map.Entry<String, ContactMethod> mapFromItr1 : mapOfContactMethodObj.entrySet())
+						mapFromItr1.getValue().setPrimary(false);
+				}
+			}
+
+			listOfUpdatedContactMethod.add(contactMethod);
+		}
+
+		if (mapOfContactMethodObj != null && !mapOfContactMethodObj.isEmpty()) {
+			for (Map.Entry<String, ContactMethod> mapFromItr2 : mapOfContactMethodObj.entrySet())
+				listOfUpdatedContactMethod.add(mapFromItr2.getValue());
+		}
+
+		return listOfUpdatedContactMethod;
+	}
+
+	public static List<Location> setReqFieldsForLocationUpdate_v1( String accountID, String departmentID, List<Location> listOfLocation,
+																   										List<Map<String, Object>> listOfInfoInMapForUpdate) throws Exception {
+
+		String locationID = "";
+		Location location = null, locationFromMap = null;
+		List<Location> listOfUpdatedLocation = null;
+		Map<String, Location> mapOfLocationObj = null;
+
+		if (Utilities.isEmpty( listOfInfoInMapForUpdate ))
+			return listOfLocation;
+
+		if (!Utilities.isEmpty( listOfLocation )) {
+			mapOfLocationObj = new HashMap<String, Location>();
+			for (Location locationFromItr : listOfLocation)
+				mapOfLocationObj.put(locationFromItr.getID(), locationFromItr);
+		}
+
+		listOfUpdatedLocation = new ArrayList<Location>();
+
+		for (Map<String, Object> mapOfLocationInfo : listOfInfoInMapForUpdate) {
+
+			location = null; locationFromMap = new Location();
+
+			Utilities.applyMapOntoInstance( locationFromMap , mapOfLocationInfo );
+			
+			locationID = locationFromMap.getID();
+			
+			if (!Utilities.isEmpty( mapOfLocationObj ) && mapOfLocationObj.containsKey(locationID)) {
+				
+				location = mapOfLocationObj.get(locationID);
+				mapOfLocationObj.remove(locationID);
+			} else {
+				
+				location = new Location();
+				
+				Utilities.applyMapOntoInstance( location , mapOfLocationInfo );
+				
+				location.setAccountID(accountID);
+				location.setDepartmentID(departmentID);
+			}
+			
+			if (location.isPrimary()) {
+				for (Location locationFromItr : listOfUpdatedLocation)
+					locationFromItr.setPrimary(false);
+
+				if (mapOfLocationObj != null && !mapOfLocationObj.isEmpty()) {
+					for (Map.Entry<String, Location> mapFromItr1 : mapOfLocationObj.entrySet())
+						mapFromItr1.getValue().setPrimary(false);
+				}
+			}
+
+			listOfUpdatedLocation.add(location);
+		}
+
+		if (mapOfLocationObj != null && !mapOfLocationObj.isEmpty()) {
+			for (Map.Entry<String, Location> mapFromItr : mapOfLocationObj.entrySet())
+				listOfUpdatedLocation.add(mapFromItr.getValue());
+		}
+
+		return listOfUpdatedLocation;
+	}
+
+	@SuppressWarnings("unchecked")
+	public static Contact setReqFieldsForContactUpdate_v1(String accountID, Contact contact, Map<String,Object> mapOfContactInfoForUpdate) throws Exception {
+
+		String departmentID = contact.getDepartmentID();
+		Map<String,Object> mapOfContactInfo = new HashMap<String,Object>(); 
+		List<Map<String,Object>> listOfContactMethodInfoInMapForUpdate = null, listOfLocationInfoInMapForUpdate = null;
+		List<ContactMethod> listOfContactMethod = contact.getLinkedContactMethods(), listOfContactMethodForUpdate = null;
+		List<Location> listOfLocation = contact.getLinkedLocations(), listOfLocationForUpdate = null;
+		List<String> linkedHistory = null, linkedHistoryForUpdate = null;
+		
+		if(Utilities.isEmpty( mapOfContactInfoForUpdate ))
+			throw new NullPointerException("Contact Info Map is null or empty");
+		
+		mapOfContactInfo.putAll( mapOfContactInfoForUpdate );
+		
+		listOfContactMethodInfoInMapForUpdate = (List<Map<String,Object>>) mapOfContactInfo.get("linkedContactMethods");
+		mapOfContactInfo.remove( "linkedContactMethods" );
+		
+		listOfLocationInfoInMapForUpdate = (List<Map<String,Object>>) mapOfContactInfo.get("linkedLocations");
+		mapOfContactInfo.remove( "linkedLocations" );
+
+		linkedHistoryForUpdate = (List<String>) mapOfContactInfo.get("linkedHistory");
+		mapOfContactInfo.remove( "linkedHistory" );
+		
+		mapOfContactInfo.remove( "linkedContacts" );
+		mapOfContactInfo.remove( "linkedDeals" );
+		mapOfContactInfo.remove( "linkedTasks" );
+		mapOfContactInfo.remove( "linkedAccounts" );
+		mapOfContactInfo.remove( "linkedTags" );
+		mapOfContactInfo.remove( "linkedDocuments" );
+		mapOfContactInfo.remove( "linkedCustomFields" );
+		
+		Utilities.applyMapOntoInstance( contact , mapOfContactInfo );
+		
+		listOfContactMethodForUpdate = setReqFieldsForContactMethodUpdate_v1(accountID, departmentID, listOfContactMethod, listOfContactMethodInfoInMapForUpdate);
+		
+		listOfLocationForUpdate = setReqFieldsForLocationUpdate_v1(accountID, departmentID, listOfLocation, listOfLocationInfoInMapForUpdate);
+		
+		if (!Utilities.isEmpty( linkedHistoryForUpdate )) {
+			
+			linkedHistory = contact.getLinkedHistory();
+			
+			if(!Utilities.isEmpty( linkedHistory ))
+				linkedHistoryForUpdate.addAll(linkedHistory);
+			
+			contact.setLinkedHistory( linkedHistoryForUpdate );
+		}
+		
+		if(!Utilities.isEmpty( listOfContactMethodForUpdate ))
+			contact.setLinkedContactMethods(listOfContactMethodForUpdate);
+		
+		if(!Utilities.isEmpty( listOfLocationForUpdate ))
+			contact.setLinkedLocations(listOfLocationForUpdate);
+		
+		return contact;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> checkForContactsToLinkInUpdate_v1(String appID, StringBuilder requestDetails, String accountID, Contact contact, 
+																	   												Map<String,Object> mapOfContactInfo) throws Exception {
+		
+		String brandID = "";
+		Contact linkedContact = null;
+		List<String> listOfContactIDToLink = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfLinkedContactInfo = null;
+		
+		if(mapOfContactInfo == null || !mapOfContactInfo.containsKey("linkedContacts")) 
+			return map;
+		
+		mapOfLinkedContactInfo = (Map<String,Object>) mapOfContactInfo.get("linkedContacts");
+		if(mapOfLinkedContactInfo == null || mapOfLinkedContactInfo.isEmpty()) 
+			return map;
+		
+		if(mapOfLinkedContactInfo.containsKey("linkContacts")) {
+			
+			listOfContactIDToLink = (List<String>) mapOfLinkedContactInfo.get("linkContacts");
+			
+			checkAndLinkOrDelinkContacts_v1(accountID, contact, listOfContactIDToLink);
+			
+			map.put("linkedContacts", listOfContactIDToLink);
+			
+		} else if(!mapOfLinkedContactInfo.containsKey("linkContacts")){
+			
+			brandID = (String) mapOfLinkedContactInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID))
+//					throw new NullPointerException("BrandID not sent for linked contact");
+//			}
+			
+			String departmentID = contact.getDepartmentID();
+			
+			if(!StringUtil.isBlank(departmentID))
+				mapOfLinkedContactInfo.put("departmentID", departmentID);
+				
+			linkedContact = constructContactObj_v1(accountID, mapOfLinkedContactInfo);
+			
+			listOfContactIDToLink = new ArrayList<String>();
+			listOfContactIDToLink.add(contact.getID());
+			linkedContact.setLinkedContacts(listOfContactIDToLink);
+			
+			insertHistoryForContact( appID , requestDetails , accountID , departmentID , linkedContact , mapOfLinkedContactInfo );
+			
+			map.put("contactToLink", linkedContact);			
+		}
+		
+		return map;
+	}
+		
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> updateContact_v1(String appID, StringBuilder requestDetails, String accountID, String contactID, String json) {
+		
+		String companyName = null, firstName = null, uniqueTabID = null, initialType = null;
+		String departmentID = null;
+		StringBuilder errorInfo = new StringBuilder();
+		boolean status = false;
+		Contact contact = null, linkedContact = null;
+		List<Map> linkedCustomFieldMap = null;
+		List<Contact> listOfContact = null, listOfUpdatedContact = null;
+		List<String> updatedLinkedCustomFieldID = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactInfoForUpdate = null, mapOfLinkedContactInfo = null, customFieldMap = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Update Contact --> accountID :" + accountID + " contactID :" + contactID + " JSON :" + json);
+			
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			
+			try {
+				mapOfContactInfoForUpdate = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});	
+			} catch(JsonMappingException | JsonParseException jsonExp) {
+				mLogger.log(Level.SEVERE , "\n Update Contact - Error : " + errorInfo, jsonExp);
+				map.put("error", "Not a proper JSON");
+				return map;
+			} catch(IOException io) {
+				mLogger.log(Level.SEVERE , "\n Update Contact - Error : " + errorInfo, io);
+				map.put("error", "Not a proper JSON");							
+				return map;
+			}
+			
+			if(mapOfContactInfoForUpdate.isEmpty()) {
+				map.put("error", "JSON string is empty");
+				map.put("success", false);
+				return map;
+			}
+				
+			listOfContact = new ArrayList<Contact>();
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			initialType = contact.getType();
+			departmentID = contact.getDepartmentID();
+			
+			insertHistoryForContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfoForUpdate );
+
+			linkExistingOrNewDocumentToContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfoForUpdate , map );
+			
+			if(mapOfContactInfoForUpdate.containsKey("linkedCustomFields")){
+				
+				linkedCustomFieldMap = (List<Map>) mapOfContactInfoForUpdate.get("linkedCustomFields");
+				
+				//customFieldMap = CustomFieldService.upsertCustomFieldsForContact(appID, requestDetails, accountID, contactID, linkedCustomFieldMap, contact.getLinkedCustomFields());
+				customFieldMap = CustomFieldService.upsertCustomFieldsForContact_v2(appID, requestDetails, accountID, contactID, departmentID, 
+																														  		linkedCustomFieldMap, contact.getLinkedCustomFields());
+				
+				if((Boolean) customFieldMap.get("success")) {
+					updatedLinkedCustomFieldID = (ArrayList<String>)customFieldMap.get("updatedLinkedCustomFields");
+					contact.setLinkedCustomFields(updatedLinkedCustomFieldID);
+					map.put("customField",customFieldMap.get("customField"));
+					
+				} else 
+					throw new Exception("Unable to update CustomFields for Contact");
+			}
+			
+			//Validate the JSON for fullName
+			if(mapOfContactInfoForUpdate.containsKey("fullName")) {
+				companyName = (String) mapOfContactInfoForUpdate.get("fullName");
+				if("company".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(companyName)) {
+					map.put("error", "fullName can't be empty or null for company");
+					map.put("success", false);
+					return map;
+				}				
+			}
+			
+			//Validate the JSON for firstName
+			if(mapOfContactInfoForUpdate.containsKey("firstName")) {
+				firstName = (String) mapOfContactInfoForUpdate.get("firstName");
+				if("person".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(firstName)) {
+					map.put("error", "firstName can't be empty or null for person");
+					map.put("success", false);
+					return map;
+				}
+			}
+			
+			if(mapOfContactInfoForUpdate.containsKey("uniqueTabID"))
+				uniqueTabID = (String) mapOfContactInfoForUpdate.get("uniqueTabID");
+			
+			contact = setReqFieldsForContactUpdate_v1(accountID, contact, mapOfContactInfoForUpdate);	
+			
+			mapOfLinkedContactInfo = checkForContactsToLinkInUpdate_v1(appID, requestDetails, accountID, contact, mapOfContactInfoForUpdate);
+			
+			setLinkedContacts( appID , requestDetails , accountID , mapOfLinkedContactInfo , contact , linkedContact , listOfContact );
+
+			listOfContact.add(contact);
+			ContactDAO.updateContact_v1(listOfContact);
+			
+			listOfUpdatedContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			/* Update Search entry for Contacts */
+			SearchService.updateContactIndexList_v1( appID , requestDetails , accountID , listOfContact );	
+			SearchService.updateContactDocumentsInIndex(appID,requestDetails,accountID,listOfContact);						
+			
+			//add tags - Need to check why SRK is updating tag for linked contact in this flow - It could be an issue that Vidya reported about tagging contacts 
+			if(!Utilities.isNull( linkedContact ))
+				addOrRemoveTags( appID , requestDetails , accountID , departmentID , linkedContact.getID() , mapOfContactInfoForUpdate , map );
+			
+			for(Contact tempContact: listOfContact) {
+				
+				if(tempContact != null && "person".equals(tempContact.getCategory()) && "lead".equals(tempContact.getType()) && !"lead".equals(initialType)){
+					
+					//DistributedSourceService.callUpdateChannelsTask(appID, requestDetails, "lead","add", tempContact.getID(), null, tempContact.getAccountID(), uniqueTabID);
+					DistributedSourceService.callUpdateChannelsTask_v2(appID, requestDetails, "lead", "add", tempContact.getID(), null, tempContact.getAccountID(), departmentID, uniqueTabID);
+				}					
+			}
+			
+			
+			/* Below fragment of code updates the latest users under an account in cache - only for DS - Settings->My Account 
+			 * Later Settings-> My Account flow in DS needs to be moved to updateUser flow - changes start */
+//				if(mapOfContactInfoForUpdate.containsKey("accountID"))
+//					AccountService.updateDSUsersInfoInCache((String) mapOfContactInfoForUpdate.get("accountID"));
+			/* Fragment of code updates the latest users under an account in cache - only for DS - changes end */
+				
+			/* To push update contact event to FullSync - changes start */
+				JobService.addFullSyncEventJob("CONTACT", "UPDATE", listOfUpdatedContact);
+			/* To push update contact event to FullSync - changes end */
+				
+			status = true;
+			
+		} catch(javax.jdo.JDOObjectNotFoundException e) {
+    		map.put("error_code", 404);
+    		map.put("error", "Contact not available");
+        } catch( Exception e ) {		
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);
+			map.put("contact", listOfUpdatedContact);
+		}
+		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static boolean removeContactFromItsHistoryAccountsAndDocuments_v1(String contactID, List<String> listOfLinkedContactID, List<String> listOfHistoryID, 
+																	List<String> listOfAccountID, List<Long> listOfDealID, List<String> listOfTaskID, List<String> listOfDocumentID) throws Exception {
+		
+		boolean isContactRemoved = false;
+		Entity entity = null;
+		Key key = null;
+		Iterable<Key> itrForContact = null, itrForHistory = null, itrForAccounts = null, itrForDocuments = null;
+		List<Key> listOfContactKey = null, listOfHistoryKey = null, listOfAccountKey = null, listOfDocumentKey = null;
+		List<String> listOfLinkedContact = null;
+		List<Entity> listOfContactEntity = null, listOfHistoryEntity = null, listOfAccountEntity = null, listOfDocumentEntity = null;
+		Future<Map<Key,Entity>> futureObjForContact = null, futureObjForHistory = null, futureObjForAccounts = null, futureObjForDocuments = null;
+		Future<List<Key>> futureObjForUpdatedContact = null, futureObjForUpdatedHistory = null, futureObjForUpdatedAccounts = null, futureObjForUpdatedDocuments = null;
+		Map<Key,Entity> mapOfContactEntity = null, mapOfHistoryEntity = null, mapOfAccountsEntity = null, mapOfDocumentsEntity = null;
+		
+		AsyncDatastoreService datastore = DatastoreServiceFactory.getAsyncDatastoreService();
+		
+		if(listOfLinkedContactID != null && !listOfLinkedContactID.isEmpty()) {
+			listOfContactKey = new ArrayList<Key>();
+			for(String contactIDFromItr : listOfLinkedContactID) {
+				key = KeyFactory.createKey("Contact", contactIDFromItr);
+				listOfContactKey.add(key);
+			}
+			
+			itrForContact = new ArrayList<Key>(listOfContactKey);
+			futureObjForContact = datastore.get(itrForContact);
+		}
+		
+		if(listOfHistoryID != null && !listOfHistoryID.isEmpty()) {
+			
+			listOfHistoryKey = new ArrayList<Key>();
+			for(String historyIDFromItr : listOfHistoryID) {
+				key = KeyFactory.createKey("History", historyIDFromItr);
+				listOfHistoryKey.add(key);
+			}
+			
+			itrForHistory = new ArrayList<Key>(listOfHistoryKey);
+			futureObjForHistory = datastore.get(itrForHistory);
+		}
+		
+		if(listOfAccountID != null && !listOfAccountID.isEmpty()) {
+			
+			listOfAccountKey = new ArrayList<Key>();
+			for(String accountIDFromItr : listOfAccountID) {
+				key = KeyFactory.createKey("Account", accountIDFromItr);
+				listOfAccountKey.add(key);
+			}
+			
+			itrForAccounts = new ArrayList<Key>(listOfAccountKey);
+			futureObjForAccounts = datastore.get(itrForAccounts);
+		}
+		
+		if(listOfDocumentID != null && !listOfDocumentID.isEmpty()) {
+			
+			listOfDocumentKey = new ArrayList<Key>();
+			for(String documentIDFromItr : listOfDocumentID) {
+				key = KeyFactory.createKey("Document", documentIDFromItr);
+				listOfDocumentKey.add(key);
+			}
+			
+			itrForDocuments = new ArrayList<Key>(listOfDocumentKey);
+			futureObjForDocuments = datastore.get(itrForDocuments);
+		}
+		
+		if(futureObjForContact != null) {
+			
+			mapOfContactEntity = futureObjForContact.get();
+			listOfContactEntity = new ArrayList<Entity>();
+			
+			for(Map.Entry<Key,Entity> mapFromItr1 : mapOfContactEntity.entrySet()) {
+				
+				listOfLinkedContact = null;
+				entity = mapFromItr1.getValue();
+				listOfLinkedContact = (List<String>) entity.getProperty("linkedContacts");
+				if(listOfLinkedContact == null || listOfLinkedContact.isEmpty())
+					continue;
+				
+				listOfLinkedContact.remove(contactID);
+				if(listOfLinkedContact.isEmpty())
+					listOfLinkedContact = null;
+				
+				entity.setProperty("linkedContacts", listOfLinkedContact);
+				listOfContactEntity.add(entity);
+			}
+			
+			futureObjForUpdatedContact = datastore.put(listOfContactEntity);
+		}
+
+		if(futureObjForHistory != null) {
+			
+			mapOfHistoryEntity = futureObjForHistory.get();
+			listOfHistoryEntity = new ArrayList<Entity>();
+			
+			for(Map.Entry<Key,Entity> mapFromItr1 : mapOfHistoryEntity.entrySet()) {
+				
+				listOfLinkedContact = null;
+				entity = mapFromItr1.getValue();
+				listOfLinkedContact = (List<String>) entity.getProperty("linkedContacts");
+				if(listOfLinkedContact == null || listOfLinkedContact.isEmpty())
+					continue;
+				
+				listOfLinkedContact.remove(contactID);
+				if(listOfLinkedContact.isEmpty())
+					listOfLinkedContact = null;
+				
+				entity.setProperty("linkedContacts", listOfLinkedContact);
+				listOfHistoryEntity.add(entity);
+			}
+			
+			futureObjForUpdatedHistory = datastore.put(listOfHistoryEntity);
+		}
+		
+		if(futureObjForAccounts != null) {
+			
+			mapOfAccountsEntity = futureObjForAccounts.get();
+			listOfAccountEntity = new ArrayList<Entity>();
+			
+			for(Map.Entry<Key,Entity> mapFromItr2 : mapOfAccountsEntity.entrySet()) {
+				
+				listOfLinkedContact = null;
+				entity = mapFromItr2.getValue();
+				listOfLinkedContact = (List<String>) entity.getProperty("linkedContacts");
+				if(listOfLinkedContact == null || listOfLinkedContact.isEmpty())
+					continue;
+				
+				listOfLinkedContact.remove(contactID);
+				if(listOfLinkedContact.isEmpty())
+					listOfLinkedContact = null;
+				
+				entity.setProperty("linkedContacts", listOfLinkedContact);
+				listOfAccountEntity.add(entity);
+			}
+			
+			futureObjForUpdatedAccounts = datastore.put(listOfAccountEntity);
+		}
+		
+		if(futureObjForDocuments != null) {
+			
+			mapOfDocumentsEntity = futureObjForDocuments.get();
+			listOfDocumentEntity = new ArrayList<Entity>();
+			
+			for(Map.Entry<Key,Entity> mapFromItr3 : mapOfDocumentsEntity.entrySet()) {
+				
+				listOfLinkedContact = null;
+				entity = mapFromItr3.getValue();
+				listOfLinkedContact = (List<String>) entity.getProperty("linkedContacts");
+				if(listOfLinkedContact == null || listOfLinkedContact.isEmpty())
+					continue;
+				
+				listOfLinkedContact.remove(contactID);
+				if(listOfLinkedContact.isEmpty())
+					listOfLinkedContact = null;
+				
+				entity.setProperty("linkedContacts", listOfLinkedContact);
+				
+				if(Utilities.isEmpty((List<String>)entity.getProperty("linkedAccounts"))  && Utilities.isEmpty((List<Long>)entity.getProperty("linkedDeals"))
+						&& Utilities.isEmpty((List<String>)entity.getProperty("linkedContacts")))
+					entity.setProperty("deleted", true);
+				
+				listOfDocumentEntity.add(entity);
+			}
+			
+			futureObjForUpdatedDocuments = datastore.put(listOfDocumentEntity);
+		}
+
+		if(futureObjForUpdatedContact != null)
+			futureObjForUpdatedContact.get();
+		
+		if(futureObjForUpdatedHistory != null)
+			futureObjForUpdatedHistory.get();
+		
+		if(futureObjForUpdatedAccounts != null)
+			futureObjForUpdatedAccounts.get();
+		
+		if(futureObjForUpdatedDocuments != null)
+			futureObjForUpdatedDocuments.get();
+		
+		if(listOfDealID != null || listOfTaskID != null) {
+			addTaskQForRemovingContactFromDealAndTask(listOfDealID, listOfTaskID);
+		}
+		
+		List<ContactSkillSet> listOfContactSkillSet = ContactSkillSetDAO.getSkillSet_v1(false, contactID);
+		if(!Utilities.isEmpty(listOfContactSkillSet)) {
+			for(ContactSkillSet contactSkillSet : listOfContactSkillSet){
+				contactSkillSet.setDeleted(true);
+			}
+			
+			DataStoreUtil.batchWrite(listOfContactSkillSet);
+		}		
+		
+		isContactRemoved = true;
+		
+		return isContactRemoved;
+	}
+	
+	//Need To Complete
+	public static boolean addTaskQForRemovingContactFromDealAndTask(List<Long> listOfDealID, List<String> listOfTaskID) throws Exception {
+		
+		boolean isContactRemoved = false;
+		
+		return isContactRemoved;		
+	}
+	
+	public static Map<String,Object> deleteContact_v1(String appID, StringBuilder requestDetails, String accountID, String contactID ) {
+		
+		StringBuilder errorInfo = null;
+		String departmentID = null;
+		boolean status = false;
+		List<Location> listOfLocation = null;
+		List<String> listOfContactID = null, listOfLinkedHistoryID = null, listOfLinkedContactID = null,
+				listOfLinkedAccountID = null, listOfLinkedTaskID = null, listOfLinkedDocumentID = null;
+		List<Long> listOfLinkedDealID = null;
+		List<ContactMethod> listOfContactMethod = null;		
+		Map<String,Object> map = new HashMap<String,Object>(), responseMap = null;
+		Contact contact = null;
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " APPID : " + appID);
+			
+			mLogger.log( java.util.logging.Level.INFO , " Delete Contact --> accountID :" + accountID + " contactID :" + contactID);
+			
+			if(StringUtil.isBlank(appID)) {
+				map.put("error_code", 401);
+				return map;
+			}
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+//			if(distributedSourceAccountID.equalsIgnoreCase(contact.getAccountID())) {
+//				map.put("success", false);
+//				return map;
+//			}
+			
+			listOfLinkedAccountID = contact.getLinkedAccounts();
+			
+			if(!Utilities.isEmpty(listOfLinkedAccountID) && listOfLinkedAccountID.contains("SEN42")) {
+				map.put("error_code", 401);
+				return map;
+			}
+			
+			String login = (String) contact.getLogin();
+			if(!StringUtil.isBlank(login) && login.contains("@a-cti.com")) {
+				map.put("error_message", "Access denied");
+				return map;
+			}
+			
+			departmentID = contact.getDepartmentID();
+			
+			contact.setDeleted(true);
+			listOfContactMethod = contact.getLinkedContactMethods();
+			listOfLocation = contact.getLinkedLocations();
+			
+			if(listOfContactMethod != null && !listOfContactMethod.isEmpty()) {
+				for(ContactMethod contactMethodFromItr : listOfContactMethod)
+					contactMethodFromItr.setDeleted(true);
+				contact.setLinkedContactMethods(listOfContactMethod);
+			}
+			
+			if(listOfLocation != null && !listOfLocation.isEmpty()) {
+				for(Location locationFromItr : listOfLocation)
+					locationFromItr.setDeleted(true);
+				contact.setLinkedLocations(listOfLocation);
+			}
+			
+			listOfLinkedContactID = contact.getLinkedContacts();	
+			contact.setLinkedContacts(null);
+			
+			listOfLinkedHistoryID = contact.getLinkedHistory();
+			contact.setLinkedHistory(null);
+						
+			contact.setLinkedAccounts(null);
+			
+			listOfLinkedDealID = contact.getLinkedDeals();
+			contact.setLinkedDeals(null);
+			
+//			listOfLinkedTaskID = contact.getLinkedTasks();
+//			contact.setLinkedTasks(null);
+			
+			listOfLinkedDocumentID = contact.getLinkedDocuments();
+			contact.setLinkedDocuments(null);		
+			
+			contact.setLinkedTags(null);
+			
+			if(!Utilities.isEmpty(contact.getLinkedCustomFields())) {
+				responseMap = CustomFieldService.deleteCustomFields(appID, requestDetails, accountID, contact.getLinkedCustomFields());
+				if((Boolean) responseMap.get("success"))
+					contact.setLinkedCustomFields(null);
+			}
+			
+			ContactDAO.updateContact_v1(contact);
+			
+			//For Search
+			listOfContactID = new ArrayList<String>();
+			listOfContactID.add( contactID );
+			
+			//SearchService.deleteContactIndex_v1(appID, requestDetails, accountID, listOfContactID);
+			//SearchService.deleteDocumentsFromIndex(appID, requestDetails, accountID, listOfContactID);
+			
+			SearchService.updateContactIndex_v1(appID, requestDetails, accountID, contact);
+			SearchService.updateContactDocumentInIndex(appID, requestDetails, accountID, contact);
+			
+			removeContactFromItsHistoryAccountsAndDocuments_v1(contactID, listOfLinkedContactID, listOfLinkedHistoryID, listOfLinkedAccountID,
+													  								listOfLinkedDealID, listOfLinkedTaskID, listOfLinkedDocumentID);
+			
+			
+			/*if(contact != null && "person".equals(contact.getCategory()) && "lead".equals(contact.getType())) 
+				DistributedSourceService.callUpdateChannelsTask(appID, requestDetails, "lead","delete", contact.getID(), null, contact.getAccountID(), null);*/
+			
+			if(contact != null && "person".equals(contact.getCategory()) && "lead".equals(contact.getType())) 
+				DistributedSourceService.callUpdateChannelsTask_v2(appID, requestDetails, "lead","delete", contact.getID(), null, contact.getAccountID(), null, departmentID);
+			
+			/* To push delete contact event to FullSync - changes start */
+				List<Contact> listOfContact = new ArrayList<Contact>();
+				listOfContact.add(contact);
+				JobService.addFullSyncEventJob("CONTACT", "DELETE", listOfContact );
+			/* To push delete contact event to FullSync - changes end */
+			
+			status = true;
+			
+		} catch( Exception e ) {	
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);				
+		} finally {
+			map.put("success", status);
+		}		
+		return map;
+	}
+
+	public static Map<String,Object> getContact_v1(String appID, StringBuilder requestDetails, String accountID, String contactID) {
+		
+		StringBuilder errorInfo = null;
+		boolean status = false;
+		Contact contact = null, updatedContact = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Get Contact --> accountID :" + accountID + " contactID :" + contactID);
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			if(!accountID.equalsIgnoreCase(contact.getAccountID())) {
+				status = false;
+				map.put("success", status);
+				map.put("contact", null);
+				return map;
+			}
+						
+			updatedContact = removeDeletedContactMethodAndLocation(contact);
+			map.put("contact", updatedContact);
+			
+			status = true;
+					
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("errorcode", 404);
+			status = false;
+			map.put("error", "Contact not found");
+			
+		} catch( Exception e ) {			
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			map.put( "exception" , e.getClass() );
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);
+		}		
+		return map; 
+	}
+	
+	@SuppressWarnings( "unchecked" )
+    public static Map<String,Object> getReqContacts_v1(String appID, StringBuilder errorInfo, String apikey, String ignoreField, 
+    																			        Map<String,Object> mapOfContactInfo) {
+		
+		boolean status = false;
+		Boolean deleted = null;
+		List<String> listOfContactID = null;
+		List<Contact> listOfContact = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			listOfContactID = (List<String>) mapOfContactInfo.get("contact");
+			
+			if(Utilities.isEmpty(listOfContactID)) {
+				map.put("error", "ContactID's are empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			if(listOfContactID.size() > 10) {
+				map.put("error", "Maximum 10 contactID's are allowed");
+				map.put("success", false);
+				return map;
+			}
+			
+			//listOfContact = ContactDAO.getContacts_v1(listOfContactID);
+			if(!Utilities.isNull(ignoreField) && "deleted".equals(ignoreField))
+				deleted = null;
+			else 
+				deleted = new Boolean(false);
+				
+			listOfContact = ContactDAO.getContactByID(deleted, listOfContactID);
+			
+			if(Utilities.isNull(ignoreField))
+				listOfContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			if(mapOfContactInfo.containsKey("linkedEntity"))
+				map.put("linkedEntity", mapOfContactInfo.get("linkedEntity"));
+			
+			status = true;
+					
+		} catch( Exception e ) {			
+			status = false;
+			map.put("error", e.getMessage());
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);						
+			map.put("contact", listOfContact);
+		}		
+		return map; 
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> getAllContacts_v1(String appID, StringBuilder requestDetails, String accountID, String category, String limitInStr, 
+														String cursor, String brandID, String accountNumber, String departmentID) {
+		
+		String nextCursor = "";
+		StringBuilder errorInfo = null;
+		boolean status = false;
+		int limit = 0;
+		List<Contact> listOfContact = null, listOfUpdatedContact = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactsForAccount = null;
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Get All Contacts --> accountID :" + accountID + " category :" + category +
+					 					" limit :" + limit + " cursor :" + cursor + " brandID :" + brandID + " departmentID : " + departmentID);
+			
+			if(StringUtil.isBlank(limitInStr)) {
+				map.put("error", "Limit for Contacts is empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			limit = Integer.parseInt(limitInStr);
+				
+			if("Person".equalsIgnoreCase(category))
+				category  = "person";
+			else if("Company".equalsIgnoreCase(category))
+				category = "company";
+			else
+				category = "";
+							
+			departmentID = Utilities.correctToNull(departmentID);
+			
+			mapOfContactsForAccount = ContactDAO.getContactsOfAnAccount_v2(accountID, category, limit, cursor, 
+																			brandID, accountNumber, departmentID);
+			nextCursor = ( String ) mapOfContactsForAccount.get("cursor");
+			listOfContact = ( List<Contact> ) mapOfContactsForAccount.get("contact");
+			
+			listOfUpdatedContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			status = true;
+					
+		} catch( Exception e ) {
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>").append(" NextCursor : ").append(nextCursor).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n" + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", status);
+			map.put("contact", listOfUpdatedContact);
+			if(!StringUtil.isBlank(nextCursor))
+				map.put("cursor", nextCursor);
+		}		
+		return map; 
+	}
+	
+	public static Contact removeDeletedContactMethodAndLocation(Contact contact) throws Exception {
+		
+		ContactMethod contactMethod = null;
+		Location location = null;
+		List<ContactMethod> listOfContactMethod = null;
+		List<Location> listOfLocation = null;
+		
+		if(contact == null)
+			throw new NullPointerException("Contact is null");
+		
+//		if(("SEN42".equalsIgnoreCase( contact.getAccountID() ) || "X5HLA".equalsIgnoreCase( contact.getAccountID() )) && contact.isDeleted())
+//			return contact;
+		
+		if(contact.isDeleted())
+			return contact;
+		
+		listOfContactMethod = contact.getLinkedContactMethods();
+		listOfLocation = contact.getLinkedLocations();
+		
+		if(listOfContactMethod != null && !listOfContactMethod.isEmpty()) {
+			
+		    for (Iterator<ContactMethod> itr = listOfContactMethod.iterator(); itr.hasNext(); ) {
+		    	contactMethod = itr.next();
+		    	if(contactMethod.isDeleted())
+		    		itr.remove();
+		    }
+		    contact.setLinkedContactMethods(listOfContactMethod);
+		}
+		
+		if(listOfLocation != null && !listOfLocation.isEmpty()) {
+			
+			 for (Iterator<Location> itr = listOfLocation.iterator(); itr.hasNext(); ) {
+		    	location = itr.next();
+		    	if(location.isDeleted())
+		    		itr.remove();
+			 }
+			 contact.setLinkedLocations(listOfLocation);
+		}
+		
+		return contact;
+	}
+
+	public static List<Contact> removeDeletedContactMethodAndLocation(List<Contact> listOfContact) throws Exception {
+		
+		ContactMethod contactMethod = null;
+		Location location = null;
+		List<ContactMethod> listOfContactMethod = null;
+		List<Location> listOfLocation = null;
+		List<Contact> listOfRemContact = new ArrayList<Contact>();
+		
+		if(Utilities.isEmpty(listOfContact))
+			return listOfRemContact;
+		
+		for(Contact contact : listOfContact) {
+			
+			listOfContactMethod = null; listOfLocation = null; contactMethod = null; location = null;
+			listOfContactMethod = contact.getLinkedContactMethods();
+			listOfLocation = contact.getLinkedLocations();
+			
+			if(listOfContactMethod != null && !listOfContactMethod.isEmpty()) {
+				
+			    for (Iterator<ContactMethod> contactMethodItr = listOfContactMethod.iterator(); contactMethodItr.hasNext(); ) {
+			    	contactMethod = contactMethodItr.next();
+			    	if(contactMethod.isDeleted())
+			    		contactMethodItr.remove();
+			    }
+			    contact.setLinkedContactMethods(listOfContactMethod);
+			}
+			
+			if(listOfLocation != null && !listOfLocation.isEmpty()) {
+				
+				 for (Iterator<Location> locationItr = listOfLocation.iterator(); locationItr.hasNext(); ) {
+			    	location = locationItr.next();
+			    	if(location.isDeleted())
+			    		locationItr.remove();
+				 }
+				 contact.setLinkedLocations(listOfLocation);
+			}
+			
+			listOfRemContact.add(contact);
+		}		
+		return listOfRemContact;
+	}
+	
+	public static Map<String,Object> getContactAndLinkedContacts_v1(String appID, StringBuilder requestDetails, String accountID, String contactID) {
+		
+		StringBuilder errorInfo = null;
+		boolean status = false;
+		Contact contact = null, updatedContact;
+		List<Contact> listOfLinkedContact = null, listOfUpdatedLinkedContact = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Get Contact and its Linked Contacts --> accountID :" + accountID + " contactID :" + contactID);
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			if(contact == null)  {
+				map.put("success",status);
+				return map;
+			}
+
+			updatedContact = removeDeletedContactMethodAndLocation(contact);
+			map.put("contact", updatedContact);
+			
+			listOfLinkedContact = getLinkedContactObj_v1(accountID, contact);			
+									
+			if( listOfLinkedContact != null && !listOfLinkedContact.isEmpty() ) {
+				listOfUpdatedLinkedContact = removeDeletedContactMethodAndLocation(listOfLinkedContact);
+				map.put("linkedContacts", listOfUpdatedLinkedContact);
+			}
+			
+			status = true;
+					
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("errorcode", 404);
+			status = false;
+			map.put("error", "Contact not found");
+			
+		} catch( Exception e ) {	
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);					
+		} finally {			
+			map.put("success", status);
+		}		
+		return map; 
+	}
+	
+	public static List<Contact> getLinkedContactObj_v1( String accountID, Contact contact ) throws Exception {
+		
+		List<Contact> listOfContact = null, listOfLinkedContact = new ArrayList<Contact>();
+		List<String> listOfContactID = new ArrayList<String>(), listOfLinkedContactID = null;
+		
+		if( contact == null )
+			return listOfLinkedContact;
+		
+		listOfLinkedContactID = contact.getLinkedContacts();
+		if( listOfLinkedContactID == null || listOfLinkedContactID.isEmpty() )
+			return listOfLinkedContact;
+		
+		listOfContactID.addAll(listOfLinkedContactID);
+		
+		listOfContact = ContactDAO.getContacts_v1(accountID, listOfContactID);
+		return listOfContact;
+	}
+	
+	// used by CS
+//	public static String setAccountIdToPeople(String loginMailId,
+//			String accountId) {
+//		try {
+//			Contact contact = ContactDAO.getContactByEmail(accountId,
+//					loginMailId);
+//			if (contact != null) {
+//				contact.setAccountID(accountId);
+//				ContactDAO.updateContact_v1(contact);
+//
+//			}
+//		} catch (Exception e) {
+//			mLogger.log(java.util.logging.Level.SEVERE,
+//					" Exception in  setAccountIdToPeople. Params-> loginMailId: "
+//							+ loginMailId + " accountId: " + accountId, e);
+//		}
+//		return "success";
+//	}
+	
+	public static List<Contact> setCompanyNameToContacts( List<Contact> listOfContact, List<Contact> listOfLinkedContact)
+																										throws Exception {
+
+		String contactID = "", category = "";
+		List<String> linkedContactIdList = null;
+		boolean flag = false;
+
+		for (Contact lContact : listOfContact) {
+
+			contactID = lContact.getID();
+			category = lContact.getCategory();
+			linkedContactIdList = null;
+			flag = false;
+			
+			if (listOfLinkedContact != null && !listOfLinkedContact.isEmpty()) {
+
+				for (Contact lLinkedContact : listOfLinkedContact) {
+
+					linkedContactIdList = lLinkedContact.getLinkedContacts();
+
+					for (String linkedContactID : linkedContactIdList) {
+
+						if (contactID.equalsIgnoreCase(linkedContactID) && "person".equalsIgnoreCase( category )) {
+							lContact.setFullName(lLinkedContact.getFullName());
+							flag = true;
+							break;
+						}
+					}
+					if (flag) {
+						break;
+					}
+				}
+			}
+		}
+		return listOfContact;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> getReqContactMethods(String appID, StringBuilder errorInfo, String apikey, 
+																					 		  Map<String,Object> mapOfContactInfo) {
+		
+		boolean success = false;
+		List<String> listOfContactMethodID = new ArrayList<String>();
+		List<ContactMethod> listOfContactMethod = null;
+		Map<String, Object> map = new HashMap<String, Object>();		
+		
+		try {
+			
+			listOfContactMethodID = (List<String>) mapOfContactInfo.get("ID");
+			
+			if(Utilities.isEmpty(listOfContactMethodID)) {
+				map.put("error", "ContactMethodID's are empty");
+				map.put("success", success);
+				return map;
+			}
+						
+			listOfContactMethod = ContactMethodDAO.getContactMethods(listOfContactMethodID);
+			
+			map.put("contactMethod", listOfContactMethod);
+			
+			success = true;
+			
+		} catch(Exception e){
+			map.put("error", e.getMessage());
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally{
+			map.put("success", success);
+		}
+		return map;
+	}
+	
+	public static Map<String,Object> getContactForDemoNo_v1(String appID, StringBuilder requestDetails, String apikey, String demoNumber) {
+		
+		String contactID = "", brandID = "";
+		StringBuilder errorInfo = null;
+		boolean success = false;
+		TestNumber testNumber = null;
+		Contact contact = null, companyContact = null, contactTemp = null;
+		Brand brand = null;
+		List<Contact> listOfContact = null, linkedContact = null;
+		List<String> linkedContacts = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			mLogger.log(java.util.logging.Level.INFO, " getContactForDemoNo_v1 --> apikey: "+ apikey + " demoNumber :" + demoNumber);
+			
+			if(StringUtil.isBlank(demoNumber)) {
+				map.put("error", "DemoNumber is empty");
+				map.put("success", success);
+				return map;
+			}
+			
+			testNumber = DataStoreUtil.getObjectByFilter( TestNumber.class,"ptestnumber == '" + demoNumber + "'");
+			if(Utilities.isNull(testNumber)) {
+				map.put("error", "DemoNumber not present");
+				map.put("success", false);
+				return map;
+			}
+			
+			contactID = testNumber.getpUniquePin();			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			if(contact.isDeleted()) {
+				map.put("error", "Contact was deleted");
+				map.put("errorcode", 404);
+				map.put("success", false);
+				return map;
+			}
+			
+			if(!apikey.equals(contact.getAccountID())) {
+				map.put("error", "Contact doesn't belong to you account");
+				map.put("errorcode", 401);
+				map.put("success", false);
+				return map;
+			}
+			
+			linkedContacts = contact.getLinkedContacts();
+			brandID = contact.getBrandID();
+			
+			listOfContact = new ArrayList<Contact>();			
+			listOfContact.add(contact);
+			
+			if(!Utilities.isEmpty(linkedContacts))
+				linkedContact = ContactDAO.getContacts_v1(linkedContacts);
+			
+			if(linkedContact != null && !linkedContact.isEmpty())
+				listOfContact.addAll(linkedContact);
+			
+			for (Iterator<Contact> itr = listOfContact.iterator(); itr.hasNext(); ) {
+				contactTemp = itr.next();
+		    	if("company".equalsIgnoreCase(contactTemp.getCategory())) {
+		    		companyContact = contactTemp;
+		    		itr.remove();
+		    		break;
+		    	}			    		
+		    }
+			
+			if(!StringUtil.isBlank(brandID))
+				brand = DataStoreUtil.getObjectByID( Brand.class , brandID );
+			
+			success = true;
+			
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("errorcode", 404);
+			map.put("success", false);
+			map.put("error", "Contact not found");
+			return map;		
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+			if(success) {
+				map.put("company", companyContact);
+				map.put("person", listOfContact);	
+				if(brand != null)
+					map.put("brand", brand);
+			}			
+		}
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static List<Contact> getContactListForSearchingSimilarContacts( String accountID, List<Map<String,Object>> listOfContactInfo ) throws Exception {
+			
+		String companyName = "", firstName = "", lastName = "", type = "", contactType = "contact", 
+				comments = "", login = "", password = "", source = "", ownerID = "", title = "", category = "person",
+				contactID = "", brandID = "", subBrandID = "", photoID = "", timeZone = "";
+		Map<String,Object> contactMethodInfoInMap = null;
+		List<ContactMethod> listOfContactMethod = null;
+		List<Location> listOfLocation = null;
+		List<Contact> contactList = new ArrayList <Contact>();
+		Contact contact = null;
+		
+		if( listOfContactInfo == null || listOfContactInfo.isEmpty() )
+			//throw new NullPointerException("Contact Info List is null or empty");
+			return contactList;
+		
+		for(Map<String,Object> mapOfContactInfo : listOfContactInfo)
+			{
+				contact = new Contact();
+				
+				/*if(mapOfContactInfo == null || mapOfContactInfo.isEmpty())
+				throw new NullPointerException("Contact Info Map is null or empty");*/
+				
+				if(mapOfContactInfo.containsKey("contactID")) 
+					contactID = (String) mapOfContactInfo.get("contactID");
+				else if(mapOfContactInfo.containsKey("contactid")) 
+					contactID = (String) mapOfContactInfo.get("contactid");
+				
+				if(mapOfContactInfo.containsKey("category") && "Company".equalsIgnoreCase((String)mapOfContactInfo.get("category")))
+					category = "company";
+					
+				if(mapOfContactInfo.containsKey("fullName"))
+					companyName = (String) mapOfContactInfo.get("fullName");
+				else if(mapOfContactInfo.containsKey("name"))
+					companyName = (String) mapOfContactInfo.get("name");
+				
+				if(mapOfContactInfo.containsKey("firstName"))
+					firstName = (String) mapOfContactInfo.get("firstName");
+				
+				if(mapOfContactInfo.containsKey("lastName"))		
+					lastName = (String) mapOfContactInfo.get("lastName");
+				
+				if(mapOfContactInfo.containsKey("type")) {
+					
+					type = (String) mapOfContactInfo.get("type");
+					if(!StringUtil.isBlank(type))
+						contactType = type.toLowerCase();			
+				}
+				
+				if(mapOfContactInfo.containsKey("brandID")) 
+					brandID = (String) mapOfContactInfo.get("brandID");
+					
+				if(mapOfContactInfo.containsKey("title")) 
+					title = (String) mapOfContactInfo.get("title");
+				
+				if(mapOfContactInfo.containsKey("source")) 
+					source = (String) mapOfContactInfo.get("source");
+				
+				if(mapOfContactInfo.containsKey("ownerID")) 
+					ownerID = (String) mapOfContactInfo.get("ownerID");
+				
+				if(mapOfContactInfo.containsKey("comments"))
+					comments = (String) mapOfContactInfo.get("comments");
+				
+				if(mapOfContactInfo.containsKey("login"))
+					login = (String) mapOfContactInfo.get("login");
+				
+				if(mapOfContactInfo.containsKey("password"))
+					password = (String) mapOfContactInfo.get("password");
+				
+				if(mapOfContactInfo.containsKey("subBrandID"))
+					subBrandID = (String) mapOfContactInfo.get("subBrandID");
+				
+				if(mapOfContactInfo.containsKey("photoID"))
+					photoID = (String) mapOfContactInfo.get("photoID");
+				
+				if(mapOfContactInfo.containsKey("timeZone"))
+					timeZone = (String) mapOfContactInfo.get("timeZone");
+				
+				if(mapOfContactInfo.containsKey("contactmethods")) {
+					
+					contactMethodInfoInMap = (Map<String,Object>) mapOfContactInfo.get("contactmethods");			
+					listOfContactMethod = getContactMethodListForSearchingSimilarContacts(accountID, contactMethodInfoInMap);
+				}
+				
+				/*if(mapOfContactInfo.containsKey("locations")) {
+				
+				locationInfoInMap = (Map<String,Object>) mapOfContactInfo.get("locations");			
+				listOfLocation = constructLocationObj_v2(accountID, locationInfoInMap);
+				}*/
+				
+				if(!StringUtil.isBlank(companyName))
+					contact.setFullName(companyName);
+				
+				if(!StringUtil.isBlank(firstName))
+					contact.setFirstName(firstName);
+				
+				if(!StringUtil.isBlank(lastName))
+					contact.setLastName(lastName);
+							
+				if(!StringUtil.isBlank(brandID))
+					contact.setBrandID(brandID);
+					
+				if(!StringUtil.isBlank(subBrandID))
+					contact.setSubBrandID(subBrandID);
+				
+				if(!StringUtil.isBlank(title))
+					contact.setTitle(title);
+				
+				if(!StringUtil.isBlank(source))
+					contact.setSource(source);
+				
+				if(!StringUtil.isBlank(ownerID))
+					contact.setOwnerID(ownerID);
+				
+				contact.setID(contactID);
+				
+				mLogger.log( java.util.logging.Level.INFO , "contact --> contactID :" + contactID);
+				
+				contact.setCategory(category);
+				contact.setAccountID(accountID);
+				contact.setType(contactType);
+				contact.setDeleted(false);
+				
+				if(!StringUtil.isBlank(comments))
+					contact.setComments(comments);
+				
+				if(!StringUtil.isBlank(login))
+					contact.setLogin(login);
+				
+				if(!StringUtil.isBlank(password))
+					contact.setPassword(password);
+				
+				if(!StringUtil.isBlank(photoID))
+					contact.setPhotoID(photoID);
+				
+				if(!StringUtil.isBlank(timeZone))
+					contact.setTimeZone(timeZone);
+				
+				if(listOfContactMethod != null && !listOfContactMethod.isEmpty())
+					contact.setLinkedContactMethods(listOfContactMethod);
+				
+				if(listOfLocation != null && !listOfLocation.isEmpty())
+					contact.setLinkedLocations(listOfLocation);
+				
+				contactList.add( contact );
+			}
+			
+		return contactList;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static List<ContactMethod> getContactMethodListForSearchingSimilarContacts(String accountID, Map<String,Object> contactMethodInfoInMap) throws Exception {
+		
+		String type = "", typeID = "", title = "", value = "", contactMethodID = "";
+		boolean isPrimaryContactMethod = false, isDeleted = false, domainMatch = false;
+		ContactMethod contactMethod = null;
+		List<ContactMethod> listOfContactMethod = new ArrayList<ContactMethod>();
+		Map <String,Object> mapOfContactMethodInfo = null;
+		List<String> emailDomainList = Arrays.asList("gmail" , "yahoo" , "aol" , "msn" , "hotmail" , "live" , "comcast"); 
+		
+		if(contactMethodInfoInMap == null || contactMethodInfoInMap.isEmpty())
+			return listOfContactMethod;
+		
+		for(Map.Entry<String,Object> mapFromItr : contactMethodInfoInMap.entrySet()) {
+
+			mapOfContactMethodInfo = null;
+			contactMethod = new ContactMethod();
+			type = ""; typeID = ""; title = ""; value = ""; contactMethodID = "";
+			domainMatch = false;
+			
+			mapOfContactMethodInfo = (Map <String,Object>) mapFromItr.getValue(); 
+			contactMethodID = String.valueOf(mapFromItr.getKey());
+			
+			contactMethod.setID(contactMethodID);
+			contactMethod.setAccountID(accountID);
+			
+			if (mapOfContactMethodInfo.containsKey("type")) {
+				type = (String) mapOfContactMethodInfo.get("type");
+				typeID = getTypeIDForContactMethod_v1(type);
+				contactMethod.setTypeID(typeID);
+				contactMethod.setType(type.toLowerCase());	
+			}
+						
+			if (mapOfContactMethodInfo.containsKey( "deleted" ))
+				isDeleted =  ((Boolean) mapOfContactMethodInfo.get("deleted"));
+			
+			if (mapOfContactMethodInfo.containsKey("title"))
+				title =  (String) mapOfContactMethodInfo.get("title");
+	
+			if (mapOfContactMethodInfo.containsKey("value"))
+				value = (String) mapOfContactMethodInfo.get("value");
+			
+			if (mapOfContactMethodInfo.containsKey("primary"))
+				isPrimaryContactMethod = ((Boolean) mapOfContactMethodInfo.get("primary"));
+			
+			if(!StringUtil.isBlank(title))
+				contactMethod.setTitle(title);
+			
+			if(StringUtil.isBlank(value))
+				continue;
+			
+			contactMethod.setPrimary(isPrimaryContactMethod);
+			contactMethod.setValue(value);
+			contactMethod.setDeleted(isDeleted);
+			
+			listOfContactMethod.add(contactMethod);
+			
+			/*if ("email".equalsIgnoreCase(type) && value.contains("@")) {
+				
+				contactMethod = new ContactMethod();
+				
+				contactMethod.setID(contactMethodID);
+				contactMethod.setAccountID(accountID);
+				contactMethod.setTypeID(typeID);
+				contactMethod.setType(type.toLowerCase());
+				contactMethod.setTitle(title);
+				contactMethod.setPrimary(isPrimaryContactMethod);
+				contactMethod.setDeleted(isDeleted);
+				
+				String[] emailAddress = value.split("@");
+
+				if (emailAddress.length > 1) 
+					value = emailAddress[1].split("[.]")[0];
+				
+				contactMethod.setValue(value);
+				
+				if(emailDomainList.contains(value))
+					domainMatch = true;
+				
+				if(!StringUtil.isBlank(value) && !domainMatch)
+					listOfContactMethod.add(contactMethod);
+			}*/
+		}		
+		return listOfContactMethod;
+	}
+	
+	public static Map<String,Object> getContactForSignUp_v1(String appID, StringBuilder requestDetails, String accountID, String contactID, String userID) {
+		
+		String contactType = null, googleAdClickID = null, cookie = null, brandID = null;
+		StringBuilder errorInfo = null;	
+		boolean success = false, isMainContact = false;		
+		Long registrationID = null;
+		Contact contact = null;
+		List<ContactSkillSet> listOfContactSkillSet = null;
+		List<String> linkedAccounts = null;
+		Registration registrationObj = null;		
+		List<Contact> listOfContact = null, listOfLinkedContact = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfRegInfo = null;
+		
+		try {
+			
+			mLogger.log(java.util.logging.Level.INFO, " getContactForSignUp_v1 --> accountID :" + accountID + " contactID :" + contactID +
+					   " userID :" + userID);
+			
+			listOfContactSkillSet = ContactSkillSetDAO.getSkillSet_v1(false,userID);
+			if(Utilities.isEmpty(listOfContactSkillSet)) {
+				map.put("error", "User doesn't have SkillSet");
+				return map;
+			}
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );			
+
+			listOfContact = new ArrayList<Contact>();
+			brandID = contact.getBrandID();
+			linkedAccounts = contact.getLinkedAccounts();
+			if(Utilities.isEmpty(linkedAccounts))
+				contactType = "lead";
+			else if(!Utilities.isEmpty(linkedAccounts))
+				contactType = "customer";
+			
+			removeDeletedContactMethodAndLocation(contact);
+			listOfContact.add(contact);
+			
+			listOfLinkedContact = getLinkedContactObj_v1(accountID, contact);			
+									
+			if( listOfLinkedContact != null && !listOfLinkedContact.isEmpty() ) {
+				listOfLinkedContact = removeDeletedContactMethodAndLocation(listOfLinkedContact);
+				listOfContact.addAll(listOfLinkedContact);
+			}
+			
+			/*Map<String,Object> mapTag = null;			
+			mapTag = TagService.checkForMainContactTag(listOfContact);
+			
+			listOfContact = (List<Contact>) mapTag.get("contact");
+			isMainContact = (boolean) mapTag.get("isMainContact");
+			*/
+			
+			registrationObj = RegistrationService.getRegistrationDetailsForContact(appID, requestDetails, contactID);			
+			if(!Utilities.isNull(registrationObj)) {
+				googleAdClickID = registrationObj.getGoogleAdClickID();
+				cookie = registrationObj.getCookie();
+				registrationID = registrationObj.getKey().getId();
+			}
+			
+			success = true;
+					
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("errorcode", 404);
+			map.put("error", "Contact not found");
+			return map;		
+		} catch( Exception e ) {			
+			errorInfo = new StringBuilder();
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);				
+		} finally {			
+			map.put("success", success);
+			if(success) {
+				
+				if(!StringUtil.isBlank(contactType))
+					map.put("contactType", contactType);
+				
+				if(!Utilities.isEmpty(listOfContact)) {
+					map.put("contact", listOfContact);
+					map.put("isMainContact", isMainContact);
+				}
+				
+				if(!StringUtil.isBlank(brandID))
+					map.put("brandID", brandID);
+				
+				if(registrationID != null) {
+					mapOfRegInfo = new HashMap<String,Object>();
+					mapOfRegInfo.put("id", registrationID);
+					mapOfRegInfo.put("cookie", cookie);
+					mapOfRegInfo.put("googleAdClickID", googleAdClickID);
+					map.put("registration", mapOfRegInfo);
+				}				
+			}			
+		}		
+		return map; 
+	}
+	
+	public static Map<String,Object> getContactForCallerID(String appID, StringBuilder requestDetails, String apikey, String accountID, String callerID) {
+		
+		StringBuilder errorInfo = null;
+		boolean success = false, isContactExist = false;
+		Contact contact = null;
+		List<Key> listOfKey = null;
+		List<String> listOfContactID = null;
+		List<Contact> listOfContact = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " callerID :" + callerID + " accountID :" + accountID + " callerID :" + callerID);
+			
+			if(StringUtil.isBlank(callerID)) {
+				map.put("error", "callerID is empty");
+				map.put("success", success);
+				return map;
+			}
+				 
+			listOfKey = ContactMethodDAO.getContactMethodForValue(accountID, callerID);
+			if(Utilities.isEmpty(listOfKey)) {
+				map.put("error", "Contact not present for given CallerID");
+				map.put("success", success);
+				return map;				
+			}
+			
+			listOfContactID = new ArrayList<String>(); 
+			for(Key key : listOfKey) 
+				listOfContactID.add(key.getParent().getName());
+			
+			listOfContact = ContactDAO.getContactsSortedByLastUpdatedDate_v1(listOfContactID);				
+			if(Utilities.isEmpty(listOfContact)) {
+				map.put("error", "Contact not present for given CallerID");
+				map.put("success", success);
+				return map;		
+			}
+			
+			contact = listOfContact.get(0);			
+			isContactExist = true;
+			
+			success = true;
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+			if(success) {
+				map.put("isContactExist", isContactExist);
+				map.put("contact", contact);
+			}
+		}
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> getAllContactsForExport_v1(String appID, StringBuilder requestDetails, String accountID, String category, 
+																									String limitInStr, String cursor, String brandID, String departmentID) {
+		
+		String nextCursor = "";
+		StringBuilder errorInfo = null;
+		boolean status = false;
+		int limit = 0;
+		List<Contact> listOfContact = null, listOfUpdatedContact = null, listOfLinkedContactFrmDb = null, listOfUpdatedLinkedContact = null;
+		List<String> listOfLinkedContactId = new ArrayList <String>();
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactsForAccount = null;
+		
+		try {
+			
+			if(!StringUtil.isBlank(limitInStr))
+				limit = Integer.parseInt(limitInStr);
+			else {
+				map.put("error", "Limit for Contacts is empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			if("Person".equalsIgnoreCase(category))
+				category  = "person";
+			else if("Company".equalsIgnoreCase(category))
+				category = "company";
+			else
+				category = "";
+							
+			departmentID = Utilities.correctToNull(departmentID);
+
+			mapOfContactsForAccount = ContactDAO.getContactsOfAnAccount_v2(accountID, category, limit, cursor, brandID, null, departmentID);
+			nextCursor = ( String ) mapOfContactsForAccount.get("cursor");
+			listOfContact = ( List<Contact> ) mapOfContactsForAccount.get("contact");
+			
+			listOfUpdatedContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			if("person".equalsIgnoreCase( category ))
+				{
+					if( listOfUpdatedContact != null && !listOfUpdatedContact.isEmpty() )
+						{
+							List<String> linkedContacts = null;
+							
+							for(Contact lContact : listOfUpdatedContact)
+								{
+									linkedContacts = lContact.getLinkedContacts();
+									
+									if(linkedContacts!=null && !linkedContacts.isEmpty())
+										listOfLinkedContactId.addAll( linkedContacts );
+								}
+
+							if(!listOfLinkedContactId.isEmpty())
+								{
+									listOfLinkedContactFrmDb = ContactDAO.getContacts_v1( accountID, listOfLinkedContactId );
+									listOfUpdatedLinkedContact = ContactService.removeDeletedContactMethodAndLocation( listOfLinkedContactFrmDb );
+								}
+							
+							if(listOfUpdatedLinkedContact!=null && !listOfUpdatedLinkedContact.isEmpty())
+								listOfUpdatedContact = setCompanyNameToContacts(listOfUpdatedContact, listOfUpdatedLinkedContact);
+						}
+				}
+			
+			status = true;
+					
+		} catch( Exception e ) {			
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);
+			map.put("contact", listOfUpdatedContact);
+			if(!StringUtil.isBlank(nextCursor))
+				map.put("cursor", nextCursor);
+		}		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> createContactFromExportableMessage(String appID, StringBuilder requestDetails, String json) {
+		
+		String historyInfoAsJSON = "", historyID = "", brandID = null, callerID = "", contactID = "", demoNumber = "";
+		String accountID = "", incomingANI = "", firstName = "", lastName = "", name = "", departmentID = null;
+		StringBuilder errorInfo = null;
+		boolean status = false, isExistingContactOfAccount = false, insertRegistrationDetails = false, validCallerID = false, primaryPhone = false;
+		Contact contact = null, linkedContact = null;
+		Account account = null;
+		Registration registrationObj = null;
+		List<String> listOfLinkedContactID = null, listOfHistoryID = null, linkedContactsForHistory = null, linkedHistory = null, linkedHistoryForUpdate = null,
+							listContactID = new ArrayList <String>(), searchInfo = new ArrayList <String>();
+		List<Contact> listOfContact = new ArrayList<Contact>();
+		List<ContactMethod> listOfContactMethodsForUpdate = null;
+		List <SearchIndex> searchIndexList = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactInfo = null,mapOfHistoryInfo = null, 
+				mapOfInsertedHistoryInfo = null, mapOfLinkedContactInfo = null, mapExistingContactOfAccount = null, mapOfContactMethodInfo = null,
+				mapOfLeadRegDetails = null, mapOfSearchResult = null;
+		List<Map<String,Object>> listOfContactMethodInfoInMap = null;
+		List<String> listOfPhone = null, listOfEmail = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mapOfContactInfo = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
+			
+			accountID = (String) mapOfContactInfo.get("accountID");
+			
+			account = DataStoreUtil.getObjectByID( Account.class , accountID );
+			
+			/* For adding ContactSkillSet to unskilled users of an account - Changes start */
+			/*if(!anctAccountID.equalsIgnoreCase(accountID))
+			{
+				List<String> linkedContactsFromAccount = null, listOfContactIDForSkillSet = new ArrayList <String>();
+				List<Contact> listOfContactFromDb = null;
+				boolean isAccountCreated = false;
+				
+				linkedContactsFromAccount = account.getLinkedContacts();
+
+				if(!Utilities.isEmpty(linkedContactsFromAccount))
+				{
+					listOfContactFromDb = ContactDAO.getContacts_v1( linkedContactsFromAccount );
+					
+					if(!Utilities.isEmpty(listOfContactFromDb))
+					{
+						for(Contact lContact : listOfContactFromDb)
+						{
+							if(!StringUtil.isBlank( lContact.getLogin() ))
+								listOfContactIDForSkillSet.add( lContact.getID() );
+						}
+					
+						isAccountCreated = ContactSkillSetService.checkAndCreateSkillSetForContacts(appID, requestDetails, accountID, listOfContactIDForSkillSet);
+					}
+				}
+			}*/
+			/* For adding ContactSkillSet to unskilled users of an account - Changes end */
+			
+			if(Utilities.isEmpty(mapOfContactInfo)) {
+				map.put("error", "JSON string is empty");
+				map.put("success", status);
+				return map;
+			}
+			
+			if(!mapOfContactInfo.containsKey("accountNumber")) {
+				map.put("error", "accountNumber not sent");
+				map.put("success", status);
+				return map;
+			}
+			
+			if ( "X15XG6".equalsIgnoreCase( accountID ) )
+				accountID = "1A5R5S";
+			
+			incomingANI = (String) mapOfContactInfo.get( "incomingANI" );
+			callerID = incomingANI;
+			
+			/* For accepting brandID only for AnswerConnect A/C (SEN42) and not for other accounts - changes start */
+			if("SEN42".equalsIgnoreCase( accountID ))
+				brandID = (String) mapOfContactInfo.get("brandID");
+			else
+				mapOfContactInfo.remove( "brandID" );
+			/* For accepting brandID only for AnswerConnect A/C (SEN42) and not for other accounts - changes end */
+			
+			mLogger.log( java.util.logging.Level.INFO , " Create Contact --> accountID :" + accountID + "\n brandID: " + brandID + "\n callerID: " 
+							+ callerID +  "\n JSON :" + json);
+			
+//			if(anctAccountID.equalsIgnoreCase(accountID) && StringUtil.isBlank(brandID)) {
+//				map.put("error", "BrandID not sent");
+//				map.put("success", status);
+//				return map;			
+//			}
+			
+			
+			String serverURL = Utilities.getStringBasedOnMode( "distributedsource.url" );
+			
+			String cmsGetURL = serverURL + "/DepartmentToGroupRelation/" + accountID;
+			
+			String responseJson = Utilities.URLFetch(cmsGetURL, "GET", "application/json", null);
+			
+			mLogger.log(java.util.logging.Level.INFO, " respJSON :" + responseJson);
+			
+			JsonNode rootNode = mapper.readValue(responseJson , JsonNode.class);
+			if(rootNode.path("success").getBooleanValue()) {
+				
+				String mapOfDepartmentToGroupRelationJson = mapper.readValue(rootNode.path("mapOfDepartmentToGroupRelation"), new TypeReference<String>(){});
+				
+				if(!StringUtil.isBlank(mapOfDepartmentToGroupRelationJson)) {
+					Map<String,List<String>> mapOfDepartmentIDToGroupID = mapper.readValue(mapOfDepartmentToGroupRelationJson, new TypeReference<Map<String,List<String>>>(){});
+					if(!Utilities.isEmpty(mapOfDepartmentIDToGroupID)) {
+						departmentID = (new ArrayList<>(mapOfDepartmentIDToGroupID.keySet())).get(0);
+					}
+				}				
+			}			
+			
+			
+			if ( !StringUtil.isBlank( callerID ) && !"null".equals( callerID ) && !"anonymous".equalsIgnoreCase( callerID ) )
+				validCallerID = true;
+			
+			firstName = (String) mapOfContactInfo.get("firstName");
+			lastName = (String) mapOfContactInfo.get("lastName");
+			
+			if( StringUtil.isBlank( firstName ) && !StringUtil.isBlank( lastName ) )
+				name = lastName;
+			else if( StringUtil.isBlank( lastName ) && !StringUtil.isBlank( firstName ) )
+				name = firstName;
+			else if( !StringUtil.isBlank( firstName ) && !StringUtil.isBlank( lastName ) )
+				name = firstName + ' ' +lastName;
+			
+			listOfContactMethodInfoInMap = (List<Map<String,Object>>) mapOfContactInfo.get("linkedContactMethods");
+			
+			if(!Utilities.isEmpty( listOfContactMethodInfoInMap ))
+				{
+					String value = "", type = "";
+					
+					listOfPhone = new ArrayList<String>();
+					listOfEmail = new ArrayList<String>();
+					
+					for(Map<String,Object> contactMethodMap : listOfContactMethodInfoInMap)
+						{
+							value = (String) contactMethodMap.get( "value" );
+							type = (String) contactMethodMap.get( "type" );
+							
+							if(StringUtil.isBlank( value ))
+								continue;
+							
+							if(!primaryPhone && "phone".equalsIgnoreCase( type ) && contactMethodMap.containsKey("primary"))
+								primaryPhone = (Boolean) contactMethodMap.get( "primary" );
+									
+							value = value.toLowerCase();
+							value = StringUtil.removeSpecialChars( value );
+							
+							if("phone".equalsIgnoreCase(type))
+								listOfPhone.add(value);
+							else if("email".equalsIgnoreCase(type))
+								listOfEmail.add(value);
+						}
+				}
+			
+			if(validCallerID)
+			{
+				mapOfSearchResult = SearchService.getSearchResultsForMessageCapture(accountID, incomingANI, name, listOfPhone, 
+																															listOfEmail, departmentID);
+				searchIndexList = (List<SearchIndex>) mapOfSearchResult.get("searchIndex");
+				isExistingContactOfAccount = (Boolean) mapOfSearchResult.get("isExistingContactOfAccount");
+				contactID = (String) mapOfSearchResult.get("contactID");
+			}
+			
+			if ( (validCallerID && !isExistingContactOfAccount) || (!validCallerID && !isExistingContactOfAccount && !anctAccountID.equalsIgnoreCase(accountID)) )
+				{
+					listOfContactMethodInfoInMap = null;
+					
+					if ( !StringUtil.isBlank( callerID ) && !"null".equals( callerID ) && !"anonymous".equalsIgnoreCase( callerID ) 
+							&& StringUtil.isBlank(contactID))
+						{
+							listOfContactMethodInfoInMap = (List<Map<String,Object>>) mapOfContactInfo.get("linkedContactMethods");
+							
+							mapOfContactMethodInfo = new HashMap <String , Object>();
+							
+							mapOfContactMethodInfo.put( "title" , "CallerID" );
+							mapOfContactMethodInfo.put( "value" , callerID );
+							mapOfContactMethodInfo.put( "type" , "Phone" );
+							
+							if(!primaryPhone)
+								mapOfContactMethodInfo.put( "primary" , true );
+							
+							if(listOfContactMethodInfoInMap == null || listOfContactMethodInfoInMap.isEmpty())
+								listOfContactMethodInfoInMap = new ArrayList <Map<String,Object>>();
+								
+							listOfContactMethodInfoInMap.add( mapOfContactMethodInfo );
+							
+							mapOfContactInfo.put( "linkedContactMethods" , listOfContactMethodInfoInMap ); 
+						}
+					
+					mapOfContactInfo.put("departmentID", departmentID);
+					contact = constructContactObj_v1(accountID, mapOfContactInfo);
+					
+					contactID = contact.getID();
+					
+					/* Insert Search entry for Contact */
+					SearchService.updateContactIndex_v1(appID, requestDetails, accountID, contact);
+					SearchService.updateContactDocumentInIndex(appID, requestDetails, accountID, contact);
+								
+					mapOfLinkedContactInfo = checkForContactsToLinkInCreate_v1(appID, requestDetails, accountID, contactID, mapOfContactInfo);
+
+					setLinkedContacts( appID , requestDetails , accountID , mapOfLinkedContactInfo , contact , linkedContact , listOfContact );
+				}
+			else if(validCallerID && !StringUtil.isBlank( contactID ))
+				contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			if( (validCallerID && contact!=null) || (!validCallerID && contact!=null && !anctAccountID.equalsIgnoreCase(accountID)) )
+				{
+					/* To check and update the existing contact for new contactmethods - Changes start */
+					if(validCallerID && isExistingContactOfAccount && contact!=null)
+					{
+						listOfContactMethodInfoInMap = (List<Map<String,Object>>) mapOfContactInfo.get("linkedContactMethods");
+						listOfContactMethodsForUpdate = constructContactMethodObj_v1(accountID, departmentID, listOfContactMethodInfoInMap);
+						contact = checkAndUpdateContact(listOfContactMethodsForUpdate, contact,searchIndexList);
+					}
+					/* To check and update the existing contact for new contactmethods - Changes end */
+						
+					/* To insert History for Contact */
+					insertHistoryForContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfo );
+					
+					if(mapOfContactInfo.containsKey("linkedHistory")) {
+						
+						linkedHistoryForUpdate = (List<String>) mapOfContactInfo.get("linkedHistory");
+						
+						if (linkedHistoryForUpdate != null && !linkedHistoryForUpdate.isEmpty())
+							{
+								linkedHistory = contact.getLinkedHistory();
+								
+								if(linkedHistory != null && !linkedHistory.isEmpty())
+									linkedHistoryForUpdate.addAll(linkedHistory);
+								
+								contact.setLinkedHistory( linkedHistoryForUpdate );
+							}
+					}
+					
+					listOfContact.add(contact);			
+					ContactDAO.insertContact_v1(listOfContact);
+					
+					/* Update Search entry for Contact */
+					SearchService.updateContactIndexList_v1( appID , requestDetails , accountID , listOfContact );
+					SearchService.updateContactDocumentsInIndex( appID , requestDetails , accountID , listOfContact );
+				}
+			
+			if ( (validCallerID && !isExistingContactOfAccount) || (!validCallerID && !isExistingContactOfAccount && !anctAccountID.equalsIgnoreCase(accountID)) )
+				{
+					for(Contact contactFromItr : listOfContact) {
+						listContactID.add( (String) contactFromItr.getID() );
+						if("person".equalsIgnoreCase(contactFromItr.getCategory()))
+							contactID = contactFromItr.getID();
+						if("lead".equalsIgnoreCase( contactFromItr.getType() ))
+							insertRegistrationDetails = true;
+					}			
+					
+					if(insertRegistrationDetails)
+						{
+							mapOfLeadRegDetails = new HashMap <String , Object>();
+							mapOfLeadRegDetails.put( "brandID" , brandID );
+							mapOfLeadRegDetails.put("departmentID", departmentID);
+							
+							registrationObj =  RegistrationService.insertLeadRegDetails(accountID, listContactID, mapOfLeadRegDetails);
+							
+							demoNumber = RegistrationService.generateDemoNumberForAnctLead(contactID);
+						}
+				}
+			
+			/* To update SwitchBoard's staging history system with captured contact - changes start */
+			JobService.addMessageHistoryJob(mapOfContactInfo, contactID);
+			/* To update SwitchBoard's staging history system with captured contact - changes end */
+			
+			status = true;
+			
+		} catch(Exception e) {		
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append("JSON : ").append(json).append("<br/>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);	
+		} finally {
+			map.put("success", status);
+			
+			if(listOfContact.isEmpty())
+				map.put("contact", null);
+			else
+				map.put("contact", listOfContact);
+		}		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> checkForContactsToLinkInUpsert_v1(String appID, StringBuilder requestDetails, String accountID, Contact contact, 
+																	   												Map<String,Object> mapOfContactInfo) throws Exception {
+		
+		boolean isExistingContact = false;
+		String brandID = "", contactID = null, companyName = null, firstName = null;
+		Contact linkedContact = null;
+		List<String> listOfContactIDToLink = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfLinkedContactInfo = null;
+		
+		
+		if(mapOfContactInfo == null || !mapOfContactInfo.containsKey("linkedContacts")) 
+			return map;
+		
+		mapOfLinkedContactInfo = (Map<String,Object>) mapOfContactInfo.get("linkedContacts");
+		if(Utilities.isEmpty(mapOfLinkedContactInfo)) 
+			return map;
+		
+		if(mapOfLinkedContactInfo.containsKey("ID") || mapOfLinkedContactInfo.containsKey("id")) {
+			contactID = (String) mapOfLinkedContactInfo.get("id");
+			if(StringUtil.isBlank(contactID))
+				contactID = (String) mapOfLinkedContactInfo.get("ID");
+		}
+		
+		try {
+			
+			if(!StringUtil.isBlank(contactID)) {
+				linkedContact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+				isExistingContact = true;	
+			}
+						
+		} catch(javax.jdo.JDOObjectNotFoundException | NullPointerException e) {			
+			mLogger.log( java.util.logging.Level.INFO , " JDOObjectNotFoundException & NullPointerException :" + e);			
+		}
+		
+		//Validate the JSON for fullName
+		if(mapOfLinkedContactInfo.containsKey("fullName")) {
+			companyName = (String) mapOfLinkedContactInfo.get("fullName");
+			if("company".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(companyName)) {
+				map.put("error", "fullName can't be empty or null for company");
+				map.put("success", false);
+				return map;
+			}				
+		}
+		
+		//Validate the JSON for firstName
+		if(mapOfLinkedContactInfo.containsKey("firstName")) {
+			firstName = (String) mapOfLinkedContactInfo.get("firstName");
+			if("person".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(firstName)) {
+				map.put("error", "firstName can't be empty or null for person");
+				map.put("success", false);
+				return map;
+			}
+		}
+		
+		if(isExistingContact) {
+			
+			linkedContact = setReqFieldsForContactUpdate_v1(accountID, linkedContact, mapOfLinkedContactInfo);
+			
+		} else {
+			
+			brandID = (String) mapOfLinkedContactInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID))
+//					throw new NullPointerException("BrandID not sent for linked contact");
+//			}
+			
+			String departmentID = (String) mapOfLinkedContactInfo.get("departmentID");
+			departmentID = Utilities.correctToNull(departmentID);
+			if(StringUtil.isBlank(departmentID)) {
+				departmentID = Utilities.getDepartmentForApiKey(accountID);				
+			}
+				
+			mapOfLinkedContactInfo.put("departmentID", departmentID);
+			
+			linkedContact = constructContactObj_v1(accountID, mapOfLinkedContactInfo);
+			
+			listOfContactIDToLink = new ArrayList<String>();
+			listOfContactIDToLink.add(contact.getID());
+			linkedContact.setLinkedContacts(listOfContactIDToLink);
+		}
+		
+		map.put("contactToLink", linkedContact);
+		map.put("isExistingContact", isExistingContact);
+		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> upsertContactInfo_v1(String appID, StringBuilder requestDetails, String accountID, String contactID, String json) {
+		
+		String historyInfoAsJSON = "", historyID= "", companyName = null, firstName = null, uniqueTabID = null;
+		StringBuilder errorInfo = null;
+		boolean status = false, isExistingLinkedContact = false;
+		Contact contact = null, linkedContact = null;
+		List<Contact> listOfContact = null, listOfUpdatedContact = null;
+		List<String> listOfLinkedContactID = null, listOfHistoryID = null, linkedContactsForHistory = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactInfoForUpdate = null, 
+				mapOfHistoryInfo = null, mapOfInsertedHistoryInfo = null, mapOfLinkedContactInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mLogger.log( java.util.logging.Level.INFO , " Update Contact --> accountID :" + accountID + " contactID :" + contactID + " JSON :" + json);
+			
+			mapOfContactInfoForUpdate = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});			
+			if(mapOfContactInfoForUpdate.isEmpty()) {
+				map.put("error", "JSON string is empty");
+				map.put("success", false);
+				return map;
+			}
+				
+			listOfContact = new ArrayList<Contact>();
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			String departmentID = contact.getDepartmentID();
+			
+			insertHistoryForContact( appID , requestDetails , accountID , departmentID , contact , mapOfContactInfoForUpdate );
+			
+			//Validate the JSON for fullName
+			if(mapOfContactInfoForUpdate.containsKey("fullName")) {
+				companyName = (String) mapOfContactInfoForUpdate.get("fullName");
+				if("company".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(companyName)) {
+					map.put("error", "fullName can't be empty or null for company");
+					map.put("success", false);
+					return map;
+				}				
+			}
+			
+			//Validate the JSON for firstName
+			if(mapOfContactInfoForUpdate.containsKey("firstName")) {
+				firstName = (String) mapOfContactInfoForUpdate.get("firstName");
+				if("person".equalsIgnoreCase(contact.getCategory()) && StringUtil.isBlank(firstName)) {
+					map.put("error", "firstName can't be empty or null for person");
+					map.put("success", false);
+					return map;
+				}
+			}
+			
+			if(mapOfContactInfoForUpdate.containsKey("uniqueTabID"))
+				uniqueTabID = (String) mapOfContactInfoForUpdate.get("uniqueTabID");
+			
+			contact = setReqFieldsForContactUpdate_v1(accountID, contact, mapOfContactInfoForUpdate);	
+			
+			mapOfLinkedContactInfo = checkForContactsToLinkInUpsert_v1(appID, requestDetails, accountID, contact, mapOfContactInfoForUpdate);
+			
+			isExistingLinkedContact = setLinkedContacts( appID , requestDetails , accountID , mapOfLinkedContactInfo , contact , linkedContact , listOfContact );
+
+			listOfContact.add(contact);
+			ContactDAO.updateContact_v1(listOfContact);
+			
+			listOfUpdatedContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			/* Insert Search entry for contacts */
+			SearchService.updateContactIndexList_v1( appID , requestDetails , accountID , listOfContact );
+			SearchService.updateContactDocumentsInIndex(appID, requestDetails, accountID, listOfContact);
+			
+			for(Contact tempContact: listOfContact) {
+				if(tempContact != null && "person".equals(tempContact.getCategory()) && "lead".equals(tempContact.getType())) {
+					//DistributedSourceService.callUpdateChannelsTask(appID, requestDetails, "lead","add", tempContact.getID(), null, tempContact.getAccountID(), uniqueTabID);
+					DistributedSourceService.callUpdateChannelsTask_v2(appID, requestDetails, "lead", "add", tempContact.getID(), null, tempContact.getAccountID(), departmentID, uniqueTabID);
+				}					
+			}
+			
+			/* To push upsert (create & update) contact event to FullSync - changes start */
+				List<Contact> createdContactList = null, updatedContactList = new ArrayList<Contact>();
+				if(!isExistingLinkedContact && linkedContact!=null) {
+					createdContactList = new ArrayList<Contact>();
+					createdContactList.add(linkedContact);
+				}else if(isExistingLinkedContact && linkedContact!=null)
+					updatedContactList.add(linkedContact);
+				
+				updatedContactList.add(contact);
+
+				if(!Utilities.isEmpty(updatedContactList))
+					JobService.addFullSyncEventJob("CONTACT", "UPDATE", updatedContactList);
+				
+				if(!Utilities.isEmpty(createdContactList))
+					JobService.addFullSyncEventJob("CONTACT", "CREATE", createdContactList);
+			/* To push upsert (create & update) contact event to FullSync - changes end */
+			
+			status = true;
+			
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("error_code", 404);
+			map.put("error", "Contact not found");				
+		} catch( Exception e ) {		
+			errorInfo = new StringBuilder();
+			status = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);			
+		} finally {
+			map.put("success", status);
+			map.put("contact", listOfUpdatedContact);
+		}
+		
+		return map;
+	}
+	
+	public static Map<String,Object> fetchPhoneNoForUsers(String appID, StringBuilder requestDetails, String apikey, String json) {
+		
+		boolean success = false;
+		StringBuilder errorInfo = null;
+		Key ancestor = null;
+		Entity entity = null;
+		Iterator<Entity> contactMethodItr = null;
+		List<String> listOfContactID = null;
+		Map<String,List<String>> mapOfContactID = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfCMInfo = null, mapOfUsersPhoneInfo = new HashMap<String,Object>();
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+						
+			mapOfContactID = mapper.readValue(json, new TypeReference<Map<String,List<String>>>(){});
+			if(Utilities.isEmpty(mapOfContactID)) {
+				map.put("success", success);
+				return map;
+			}
+			
+			listOfContactID = mapOfContactID.get("contactID");
+			if(Utilities.isEmpty(listOfContactID)) {
+				map.put("success", success);
+				return map;
+			}
+			
+			for(String contactID : listOfContactID) {
+				
+				ancestor = KeyFactory.createKey("Contact", contactID);
+				contactMethodItr = ContactDAO.getContactMethodEntities_v1(ancestor, "phone");
+				while(contactMethodItr.hasNext()) {
+					
+					entity = contactMethodItr.next();
+					
+					if(!(Boolean) entity.getProperty("primary"))
+						continue;
+					
+					mapOfCMInfo = new HashMap<String,Object>();
+					mapOfCMInfo.put("id", entity.getProperty("ID"));
+					mapOfCMInfo.put("value", entity.getProperty("value"));
+					mapOfUsersPhoneInfo.put(contactID, mapOfCMInfo);
+					break;
+				}
+			}
+			
+			success = true;
+			
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);	
+		} finally {
+			map.put("success", success);
+			map.put("phoneNoInfo", mapOfUsersPhoneInfo);
+		}
+		return map;
+	}
+	
+	private static Contact checkAndUpdateContact(List<ContactMethod> listOfContactMethodsForUpdate, Contact contact,List<SearchIndex> searchIndexList) throws Exception
+	{
+		SearchIndex searchIndex = null;
+		Map<String,String> primaryContactMethodMap = new HashMap<String,String>();
+		String searchIndexID = "", contactID = "", category = "", text = "", contactMethodType = "";
+		boolean contactMethodExactMatch = false, primaryContactMethod = false;
+		ObjectMapper objectMapper = new ObjectMapper();
+		
+		List<ContactMethod> newContactMethodList = new ArrayList<ContactMethod>(), contactMethodListFromDb = null;
+		
+		if(Utilities.isEmpty(searchIndexList))
+			return contact;
+		
+		searchIndex = searchIndexList.get(0);
+		
+		category = searchIndex.getCategory();
+		
+		if(category.equals("account") || category.equals("deal"))
+			return contact;
+		
+		searchIndexID = searchIndex.getID();
+		contactID = contact.getID();
+		
+		List<String> contactMethodListFromSearchIndex = searchIndex.getContactMethods();
+		
+		if(Utilities.isEmpty(contactMethodListFromSearchIndex) || Utilities.isEmpty(listOfContactMethodsForUpdate))
+			return contact;
+		
+		if(searchIndexID.equalsIgnoreCase( contactID ))
+		{
+			for(ContactMethod lContactMethod : listOfContactMethodsForUpdate)
+			{
+				contactMethodExactMatch = false;
+				primaryContactMethod = lContactMethod.isPrimary();
+				contactMethodType = lContactMethod.getType();
+				
+				for(String contactMethod : contactMethodListFromSearchIndex)
+				{
+					text = lContactMethod.getValue();
+					
+					if(StringUtil.isBlank( text ))
+						continue;
+						
+					if("web".equalsIgnoreCase( lContactMethod.getType() ))
+						{
+							String webAddress[] = null;
+
+							if ( text.contains( "//" ) )
+								{
+									webAddress = text.split( "//" );
+
+									text = webAddress [1];
+								}
+
+							webAddress = text.split( "[.]" );
+
+							if ( webAddress.length > 1 )
+								{
+									text = "";
+
+									for ( String str : webAddress )
+										{
+											if ( str.contains( "www" ) )
+												continue;
+											else
+												text = text + str;
+										}
+								}
+						}
+					
+					text.toLowerCase();
+					text = StringUtil.removeSpecialChars(text);
+					
+					if(contactMethod.equalsIgnoreCase( text ))
+						{
+							contactMethodExactMatch = true;
+							break;
+						}
+				}
+				
+				if(!contactMethodExactMatch)
+				{
+					if(primaryContactMethod)
+					{
+						if("phone".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("phone", lContactMethod.getValue());
+						else if("email".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("email", lContactMethod.getValue());
+						else if("fax".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("fax", lContactMethod.getValue());
+						else if("web".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("web", lContactMethod.getValue());
+						else if("sms".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("sms", lContactMethod.getValue());
+						else if("socialid".equalsIgnoreCase(contactMethodType))
+							primaryContactMethodMap.put("socialid", lContactMethod.getValue());
+					}
+					
+					newContactMethodList.add(lContactMethod);
+				}
+			}
+			
+			if(Utilities.isEmpty(newContactMethodList))
+				return contact;
+			
+			contactMethodListFromDb = contact.getLinkedContactMethods();
+			
+			if(contactMethodListFromDb == null)
+				contactMethodListFromDb = new ArrayList<ContactMethod>();
+			
+			contactMethodListFromDb.addAll(newContactMethodList);
+			
+			if(!Utilities.isEmpty(contactMethodListFromDb) && !Utilities.isEmpty(primaryContactMethodMap))
+				contactMethodListFromDb = checkAndUpdatePrimaryContactMethod(contactMethodListFromDb, primaryContactMethodMap);
+			
+			contact.setLinkedContactMethods(contactMethodListFromDb);
+		}
+		
+		return contact;
+	}
+	
+	private static List<ContactMethod> checkAndUpdatePrimaryContactMethod(List<ContactMethod> listOfContactMethod, Map<String,String> primaryContactMethodMap) throws Exception
+	{
+		String type = "", value = "", primaryValue = "";
+		
+		for(ContactMethod lContactMethod : listOfContactMethod)
+		{
+			primaryValue = "";
+			
+			type = lContactMethod.getType();
+			value = lContactMethod.getValue();
+			
+			if(lContactMethod.isDeleted())
+				continue;
+			
+			switch(type)
+			{
+				case "phone" :
+					primaryValue = primaryContactMethodMap.get("phone");
+					break;
+				case "email" :
+					primaryValue = primaryContactMethodMap.get("email");
+					break;
+				case "fax" :
+					primaryValue = primaryContactMethodMap.get("fax");
+					break;
+				case "web" :
+					primaryValue = primaryContactMethodMap.get("web");
+					break;
+				case "sms" :
+					primaryValue = primaryContactMethodMap.get("sms");
+					break;
+				case "socialid" :
+					primaryValue = primaryContactMethodMap.get("socialid");
+					break;
+				default :
+					break;
+			}
+			
+			if(!StringUtil.isBlank(primaryValue) && !primaryValue.equalsIgnoreCase(value))
+				lContactMethod.setPrimary(false);
+		}
+		
+		return listOfContactMethod;
+	}
+	
+	public static boolean checkAccountsForMessageCapture(String accountID)
+	{
+		boolean allowMessageCapture = false;
+		/*String[] accountIDs = {"SEN42","21dbb9f8-399e-41eb-9b85-769d09db792a","2F8Y7H","K0D0BR","AH4UZ6","4B0UE0","2NMQS",
+											"0797af4a-9cc5-4e6a-b54f-3b5c4a5d2d45","AWMSU","XQ9P5","4HU65","54009ed8-a2ef-43ff-ba2c-66d27da24c4b",
+											"BHNPQ","YCLNK","0797af4a-9cc5-4e6a-b54f-3b5c4a5d2d45","XQ9P5","QTPHZ","HDP1Q1","1A7ARQ"};*/
+		String[] accountIDs = {"SEN42"};
+		
+		List<String> listOfAccount = Arrays.asList(accountIDs);
+		
+		if(!listOfAccount.contains(accountID))
+			allowMessageCapture = true;
+		
+		return allowMessageCapture;
+	}
+
+	public static Map<String,Object> getContactsByDateRange(String appID, StringBuilder requestDetails, String apikey, String json) {
+		
+		boolean success = false;
+		StringBuilder errorInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap, contactMap;
+		String fromDateStr, toDateStr, cursor, utcOffsetString, departmentID;
+		Date fromDate, toDate;
+		Calendar cFromDate = Calendar.getInstance();
+		Calendar cToDate = Calendar.getInstance();
+		SimpleDateFormat sdf = new SimpleDateFormat( "MM/dd/yyyy" );
+		List<Contact> contacts = null;
+		List<String> contactID = null;
+		
+		try {
+						
+			inputMap = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
+			
+			fromDateStr = String.valueOf(inputMap.get("fromDate"));
+			toDateStr = String.valueOf(inputMap.get("toDate"));
+			cursor = String.valueOf(inputMap.get("cursor"));
+			utcOffsetString =  String.valueOf(inputMap.get("utcOffsetString"));
+			departmentID =  String.valueOf(inputMap.get("departmentID"));
+			departmentID = Utilities.correctToNull(departmentID);
+			
+			if(cursor == null || cursor.equalsIgnoreCase("null"))
+				cursor = "";
+			
+			/*fromDate = sdf.parse(fromDateStr);
+			cFromDate.setTime(fromDate);
+			cFromDate.set(cFromDate.get(cFromDate.YEAR ), cFromDate.get(cFromDate.MONTH), cFromDate.get(cFromDate.DATE), 00, 00, 00);
+			fromDate = cFromDate.getTime();
+
+			toDate = sdf.parse(toDateStr);
+			cToDate.setTime(toDate);
+			cToDate.set(cToDate.get(cToDate.YEAR), cToDate.get(cToDate.MONTH), cToDate.get(cToDate.DATE), 23, 59, 59 );
+			toDate = cToDate.getTime();*/
+			System.out.println("utcOffsetString: "+utcOffsetString);
+			SimpleDateFormat sdfCal = new SimpleDateFormat( "MMM dd, yyyy" );
+			SimpleDateFormat PSTsdf = new SimpleDateFormat( "MM/dd/yyyy" );
+			
+			TimeZone timeZone = TimeZone.getTimeZone( utcOffsetString );
+
+			PSTsdf.setTimeZone( timeZone );
+			sdfCal.setTimeZone( timeZone );
+
+			fromDate = PSTsdf.parse( fromDateStr );
+			fromDateStr = sdfCal.format( fromDate );
+
+			cFromDate.setTimeZone( timeZone );
+			cFromDate.setTime( fromDate );
+			cFromDate.set( cFromDate.get( cFromDate.YEAR ) , cFromDate.get( cFromDate.MONTH ) , cFromDate.get( cFromDate.DATE ) , 00 ,
+			        00 , 00 );
+			fromDate = cFromDate.getTime();
+
+			toDate = PSTsdf.parse( toDateStr );
+			toDateStr = sdfCal.format( toDate );
+
+			cToDate.setTimeZone( timeZone );
+			cToDate.setTime( toDate );
+			cToDate.set( cToDate.get( cToDate.YEAR ) , cToDate.get( cToDate.MONTH ) , cToDate.get( cToDate.DATE ) , 23 , 59 , 59 );
+			toDate = cToDate.getTime();
+			
+			System.out.println("fromDate: "+fromDate);
+			System.out.println("toDate: "+toDate);
+			System.out.println("JSONL: "+json);
+			contactMap = ContactDAO.getContactsByDateRange( apikey , 30 , cursor, toDate, fromDate, departmentID );
+			
+			contacts = (List<Contact>) contactMap.get("contact");
+			if(!Utilities.isEmpty(contacts)){
+				
+				contactID = new ArrayList<String>();
+				for(Contact contact : contacts) {
+					contactID.add(contact.getID());
+				}
+				
+				Map<String, List<String>> mapOfTag = TagDAO.getTagsForEntity(contactID, false);
+				
+				for(Contact contact : contacts) {
+					if(mapOfTag.containsKey(contact.getID()))
+						contact.setLinkedTags(mapOfTag.get(contact.getID()));
+				}
+			}
+			
+			map.putAll(contactMap);
+			
+			success = true;
+			
+		} catch(Exception e) {			
+			
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);	
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+	}
+
+public static void deleteSelectedContacts( List<String> listContactID  ) throws Exception {
+		
+		List<Contact> listContacts = null;
+		List<ContactMethod> listContactMethod = null;
+		List<Location> listLocation = null;
+		
+		listContacts = ContactDAO.getContacts_v1(listContactID);
+		
+		if(!Utilities.isEmpty(listContacts)) {
+			
+			for(Contact contact : listContacts) {
+				
+				listContactMethod = contact.getLinkedContactMethods();
+				listLocation = contact.getLinkedLocations();
+								
+				if(!Utilities.isEmpty(listContactMethod)) {				
+					for( ContactMethod contactMethod : listContactMethod ) 
+						contactMethod.setDeleted(true);					
+				}
+				
+				if(!Utilities.isEmpty(listLocation)) {
+					for(Location location : listLocation) 
+						location.setDeleted(true);
+				}
+				contact.setDeleted(true);
+			}			
+			ContactDAO.updateContact_v1(listContacts);
+		}		
+	}
+
+public static void restoreSelectedContacts(String accountID, List<String> listContactID  ) throws Exception {
+	
+	List<Contact> listContacts = null;
+	List<ContactMethod> listContactMethod = null;
+	List<Location> listLocation = null;
+	
+	listContacts = ContactDAO.getContacts_v2(accountID, listContactID);
+	
+	if(!Utilities.isEmpty(listContacts)) {
+		
+		for(Contact contact : listContacts) {
+			
+			listContactMethod = contact.getLinkedContactMethods();
+			listLocation = contact.getLinkedLocations();
+							
+			if(!Utilities.isEmpty(listContactMethod)) {				
+				for( ContactMethod contactMethod : listContactMethod ) 
+					contactMethod.setDeleted(false);					
+			}
+			
+			if(!Utilities.isEmpty(listLocation)) {
+				for(Location location : listLocation) 
+					location.setDeleted(false);
+			}
+			contact.setDeleted(false);
+		}			
+		ContactDAO.updateContact_v1(listContacts);
+	}		
+}
+	
+	public static Map<String,Object> getCustomFieldsMapForContacts( List<Contact> listOfContact ) {
+		
+		Map<String,Object> responseMap = new LinkedHashMap<String,Object>(), mapForOneContact = null;		
+		
+		try {
+			
+			if(Utilities.isEmpty(listOfContact))
+				return responseMap;
+				
+			for(Contact contact : listOfContact) {
+				
+				mapForOneContact = constructReqFieldsForContact(contact);
+				responseMap.put(contact.getID(), mapForOneContact);
+			}
+		}
+		catch( Exception e ) {
+			
+			mLogger.log( java.util.logging.Level.SEVERE , "\n Exception in getCustomFieldsMapForContacts", e);
+		}
+		
+		return responseMap;
+		
+	}
+	
+	public static Map<String,Object> constructReqFieldsFromContactMethodObj( List<ContactMethod> listOfContactMethod, String contactType ) 
+			throws NullPointerException {
+
+		String type = "", title = "", value = "";
+		boolean isDeleted = false, isPrimary = false;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactMethodInfo = null;
+		
+		for( ContactMethod contactMethodFromItr : listOfContactMethod ) {
+		
+			mapOfContactMethodInfo = new HashMap<String,Object>();
+			type = ""; title = ""; value = ""; isDeleted = false; isPrimary = false;
+			
+			isDeleted = contactMethodFromItr.isDeleted();
+			
+			type = contactMethodFromItr.getType();
+			title = contactMethodFromItr.getTitle();
+			value = contactMethodFromItr.getValue();
+			isPrimary = contactMethodFromItr.isPrimary();			
+						
+			mapOfContactMethodInfo.put("type", type);
+			mapOfContactMethodInfo.put("title", title);
+			mapOfContactMethodInfo.put("value", value);
+			mapOfContactMethodInfo.put("isPrimary", isPrimary);
+			mapOfContactMethodInfo.put("deleted", isDeleted);
+			
+			if(!StringUtil.isBlank(contactMethodFromItr.getID())) //added to prevent bad data in CMS from creating problems.
+				map.put( contactMethodFromItr.getID(), mapOfContactMethodInfo);
+		}
+			
+		return map;
+	}
+		
+	public static Map<String,Object> constructReqFieldsFromLocationObj( List<Location> listOfLocation ) throws Exception {
+	
+		boolean isDeleted = false;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfLocationInfo = null;
+		
+		for( Location locationFromItr : listOfLocation ) {
+		
+			mapOfLocationInfo = new HashMap<String,Object>();
+			isDeleted = false;
+			
+			isDeleted = locationFromItr.isDeleted();
+			
+			mapOfLocationInfo.put("title", locationFromItr.getTitle());
+			mapOfLocationInfo.put("address", locationFromItr.getAddress());
+			mapOfLocationInfo.put("city", locationFromItr.getCity());
+			mapOfLocationInfo.put("state", locationFromItr.getState());
+			mapOfLocationInfo.put("country", locationFromItr.getCountry());
+			mapOfLocationInfo.put("zip", locationFromItr.getZip());
+			mapOfLocationInfo.put("deleted", isDeleted);
+			
+			map.put( locationFromItr.getID(), mapOfLocationInfo);
+		}
+	
+		return map;
+	}
+
+	public static String getNameForAContact( String firstName, String lastName ) throws NullPointerException {
+		
+		String contactName = "";
+		
+		if( StringUtil.isBlank( firstName ) && !StringUtil.isBlank( lastName ) ) {
+			contactName = lastName;
+		} else if( StringUtil.isBlank( lastName ) && !StringUtil.isBlank( firstName ) ) {
+			contactName = firstName;
+		} else if( !StringUtil.isBlank( firstName ) && !StringUtil.isBlank( lastName ) ) {
+			contactName = firstName + ' ' +lastName;
+		}
+		return contactName;
+	}
+	
+	public static Map<String,Object> constructReqFieldsForContact( Contact contact ) throws Exception {
+		
+		boolean deleted  = false;
+		
+		String contactID = "", firstName = "", lastName = "", accountID, title = "", source = "", comments = "", category = "", timeZone = "";
+		String name = "", companyName = "", type = "", brandID = "", ownerID = "", departmentID = null, photoID = null, login = null;
+		
+		List<ContactMethod> listOfContactMethod = null;
+		List<Location> listOfLocation = null;
+		List<Long> listOfDealID = null;
+		List<String> listOfTaskID = null, listOfHistoryID = null, listOfLinkedContactID = null, listOfLinkedAccountID = null, listOfLinkedDocuments = null,
+				listOfLinkedCustomFields = null;
+		
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfLocationInfo = null, mapOfContactMethodInfo = null;
+		
+		Date dateAdded = null;
+		
+		contactID = contact.getID();
+		firstName = contact.getFirstName();
+		lastName = contact.getLastName();
+		accountID = contact.getAccountID();
+		title = contact.getTitle();
+		source = contact.getSource();
+		comments = contact.getComments();
+		category = contact.getCategory();
+		deleted = contact.isDeleted();
+		type = contact.getType();
+		brandID = contact.getBrandID();
+		ownerID = contact.getOwnerID();
+		departmentID = contact.getDepartmentID();
+		photoID = contact.getPhotoID();
+		login = contact.getLogin();
+		timeZone = contact.getTimeZone();
+		
+		listOfLocation = contact.getLinkedLocations();
+		listOfContactMethod = contact.getLinkedContactMethods();
+		dateAdded = contact.getCreatedDate();
+		
+		listOfLinkedContactID = contact.getLinkedContacts();
+		listOfDealID = contact.getLinkedDeals();
+		listOfTaskID = contact.getLinkedTasks();
+		listOfHistoryID = contact.getLinkedHistory();
+		listOfLinkedAccountID = contact.getLinkedAccounts();
+		listOfLinkedDocuments = contact.getLinkedDocuments();
+		listOfLinkedCustomFields = contact.getLinkedCustomFields();
+		
+		map.put("id", contactID);		
+		map.put("accountid", accountID);
+		map.put("category", category);
+		map.put( "dateadded" , dateAdded );
+		map.put( "type" , type );
+		map.put( "brandid" , brandID );
+		map.put( "deleted" , deleted );
+		map.put("departmentid", departmentID);
+		map.put("photoID", photoID);
+		map.put("login",login);
+		
+		if("person".equalsIgnoreCase( category )) {
+				name = getNameForAContact( firstName, lastName );
+				companyName = contact.getFullName();
+			}
+		else if("company".equalsIgnoreCase( category )) 
+			name = contact.getFullName();
+		
+		if( !StringUtil.isBlank( ownerID ) )
+			map.put("ownerid", ownerID);
+			
+		map.put("name", name);
+
+		if( !StringUtil.isBlank(companyName) )
+			map.put("companyname", companyName);
+		
+		if( !StringUtil.isBlank(title) )
+			map.put("title", title);
+		
+		if( !StringUtil.isBlank(source) )
+			map.put("source", source);
+		
+		if( !StringUtil.isBlank(comments) )
+			map.put("comments", comments);
+				
+		if( listOfContactMethod != null && !listOfContactMethod.isEmpty() ) {
+			
+			mapOfContactMethodInfo = constructReqFieldsFromContactMethodObj(listOfContactMethod, type);			
+			map.put("contactmethods", mapOfContactMethodInfo);
+		}
+		
+		if( listOfLocation != null && !listOfLocation.isEmpty() ) {
+			
+			mapOfLocationInfo = constructReqFieldsFromLocationObj(listOfLocation);			
+			map.put("locations", mapOfLocationInfo);
+		}
+					
+		if( listOfLinkedContactID != null && !listOfLinkedContactID.isEmpty() ) {
+			
+			map.put("linkedcontacts", listOfLinkedContactID);
+		}
+		
+		if( listOfDealID != null && !listOfDealID.isEmpty() ) 
+			map.put("linkeddeals", listOfDealID);
+
+		if( listOfTaskID != null && !listOfTaskID.isEmpty() )
+			map.put("linkedtasks", listOfTaskID);
+		
+		if( listOfHistoryID != null && !listOfHistoryID.isEmpty() )
+			map.put("linkedhistory", listOfHistoryID);
+		
+		if( listOfLinkedAccountID != null && !listOfLinkedAccountID.isEmpty() )
+			map.put("linkedaccounts", listOfLinkedAccountID);
+		
+		if(type.equals("lead"))
+			map.put("lastupdateddate", contact.getLastUpdatedDate());
+		
+		if( listOfLinkedDocuments != null && !listOfLinkedDocuments.isEmpty() )
+			map.put("linkeddocuments", listOfLinkedDocuments);
+		
+		if( listOfLinkedCustomFields != null && !listOfLinkedCustomFields.isEmpty() )
+			map.put("linkedcustomfields", listOfLinkedCustomFields);
+		
+		if( !StringUtil.isBlank(timeZone) ) {
+			map.put("timeZone", timeZone);
+		}
+
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> getContactRelatedInfoForDS_v1(String appID, StringBuilder errorInfo, Map<String,Object> mapOfContactInfo) throws Exception {
+		
+		boolean success = false;
+		List<Contact> listOfContact = null;
+		List<Map<String,Object>> listOfContactSkillSetInfoAsMap = new ArrayList<Map<String,Object>>();
+		Map<String, List<Map<String,Object>>> mapOfContactIDToGroup = null;
+		Map<String, Map<String,Object>> mapOfContactIDToDepartment = null;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			String productID = (String) mapOfContactInfo.get("productID");
+			String defaultSkillSetID = Utilities.getSkillSetIDByProduct(productID);
+			String accountID = (String) mapOfContactInfo.get("accountID");
+			List<String> listOfContactID = (List<String>) mapOfContactInfo.get("contact");
+			
+			Entity contactSkillSet = null;
+			Set<String> setOfContactIDWithAccess = new HashSet<String>();
+			listOfContactSkillSetInfoAsMap = new ArrayList<Map<String,Object>>();
+			
+			QueryResultIterator<Entity> contactSkillSetIterator = ContactSkillSetDAO.getContactSkillSet_v3(accountID, listOfContactID, false, defaultSkillSetID);
+			
+			while ( contactSkillSetIterator.hasNext() ) {			
+				contactSkillSet = contactSkillSetIterator.next();							
+				setOfContactIDWithAccess.add((String) contactSkillSet.getProperty("contactID"));
+				listOfContactSkillSetInfoAsMap.add(Utilities.convertToMap(String.class, contactSkillSet));			
+			}
+			
+			if(Utilities.isEmpty(listOfContactSkillSetInfoAsMap)) {
+				success = true;
+				return map;
+			}
+			
+			List<String> listOfContactIDWithAccess = new ArrayList<String>(setOfContactIDWithAccess);
+			
+			listOfContact = ContactDAO.getContacts_v1(listOfContactIDWithAccess);
+			listOfContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			mapOfContactInfo.put("contact", listOfContactIDWithAccess);
+			Map<String,Object> mapOfResponseInfo = DepartmentService_v2.getDepartmentsAssociatedToContact_v1(appID, errorInfo, accountID, productID, mapOfContactInfo);
+			if(!(Boolean) mapOfResponseInfo.get("success")) {
+				map.put("error_message", mapOfResponseInfo.get("error_message"));
+				return map;
+			}
+			
+			mapOfContactIDToDepartment = (Map<String, Map<String,Object>>) mapOfResponseInfo.get("department");			
+			
+			mapOfResponseInfo = null;
+			mapOfResponseInfo = GroupService_v2.getGroupsAssociatedToContact_v1(appID, errorInfo, accountID, productID, mapOfContactInfo);
+			if(!(Boolean) mapOfResponseInfo.get("success")) {
+				map.put("error_message", mapOfResponseInfo.get("error_message"));
+				return map;
+			}
+			
+			mapOfContactIDToGroup = (Map<String, List<Map<String,Object>>>) mapOfResponseInfo.get("group");
+			
+			success = true;
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , "\n getContactRelatedInfo_v1 - Error : " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+			if(success) {
+				
+				if(!Utilities.isEmpty(listOfContact))
+					map.put("contact", listOfContact);
+				
+				if(!Utilities.isEmpty(listOfContactSkillSetInfoAsMap))
+					map.put("contactSkillSet", listOfContactSkillSetInfoAsMap);
+				
+				if(!Utilities.isEmpty(mapOfContactIDToDepartment)) 
+					map.put("department", mapOfContactIDToDepartment);
+				
+				if(!Utilities.isEmpty(mapOfContactIDToDepartment)) 
+					map.put("group", mapOfContactIDToGroup);
+			}
+		}		
+		return map;
+	}
+	
+	public static Map<String,Object> getUsersByLastUpdatedDate(String accountID, String lastUpdatedDate_String, String previousCursorStr){
+		
+		boolean status = false;
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try{
+			SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+			
+			long milliSeconds = Long.parseLong(lastUpdatedDate_String);			
+
+			
+			Date lastUpdatedDate = sdf.parse(sdf.format(milliSeconds));
+			
+			map = ContactDAO.getUsersByLastUpdatedDate(accountID, lastUpdatedDate, 10, previousCursorStr);
+			
+			status = true;
+			
+		}catch(Exception e){
+			mLogger.log(java.util.logging.Level.SEVERE, "getUsersByLastUpdatedDate :", e);
+		}finally{
+			map.put("success", status);
+			map.put("accountID", accountID);
+		}
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> checkIfLoginAlreadyExist_v1(String appID, StringBuilder errorInfo, String productID, String email) {
+		
+		boolean success = false;
+		boolean contactExist = false, accountExist = false, accessExist = false;
+		Map<String,Object> map = new HashMap<>();
+		
+		try {
+			
+			if(StringUtil.isBlank(email)) {
+				map.put("error_message", "Email is empty");
+				return map;
+			}
+			
+			email = email.toLowerCase();
+			
+			List<Contact> listOfContact = DataStoreUtil.getListOfObjectByFilter( Contact.class ,"login == '" + email + "' && deleted == false" );
+			
+			if(Utilities.isEmpty(listOfContact)) {
+				success = true;
+				return map;
+			}
+			
+			if(listOfContact.size() > 1) 
+				throw new Exception("More than one Contact with same email");
+						
+			Contact contact = listOfContact.get(0);
+			map.put("contact", contact);
+			
+			contactExist = true;
+			
+			String contactID = contact.getID();
+			
+			Map<String,Object> mapOfResponseInfo = ContactSkillSetService.getAccessForContactUnderProduct_v1(appID, errorInfo, productID, contactID);
+			if(!(Boolean) mapOfResponseInfo.get("success")) {
+				success = true;
+				return map;
+			}
+			
+			List<ContactSkillSet> listOfContactSkillSet = (List<ContactSkillSet>) mapOfResponseInfo.get("contactSkillSet");
+			if(Utilities.isEmpty(listOfContactSkillSet)) {
+				success = true;
+				return map;
+			}
+			
+			if(listOfContactSkillSet.size() > 1)
+				throw new Exception("Contact has access to more than one Account");
+			
+			ContactSkillSet contactSkillSet = listOfContactSkillSet.get(0);
+						
+			String accountID = contactSkillSet.getAccountID();
+			if(StringUtil.isBlank(accountID)) {
+				success = true;
+				return map;
+			}
+			
+			map.put("contactSkillSet", contactSkillSet);
+			
+			accessExist = true;
+			
+			mapOfResponseInfo = AccountService.getAccount_v1(appID, errorInfo, accountID);
+			if(!(Boolean) mapOfResponseInfo.get("success")) {
+				return map;
+			}
+			
+			map.put("account", mapOfResponseInfo.get("account"));
+			
+			accountExist = true;
+			success = true;
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , " checkIfLoginAlreadyExist_v1 - Error : " + errorInfo, e);
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+			if(success) {
+				map.put("contact_exist", contactExist);
+				map.put("account_exist", accountExist);
+				map.put("access_exist", accessExist);
+			}
+		}		
+		return map;
+	}
+	
+	public static Map<String,Object> getContactBasedOnParamters_v1(String appID, StringBuilder errorInfo, Map<String,String> mapOfParamtersInfo) {
+		
+		boolean success = false;
+		Map<String,Object> map = new HashMap<>();
+		
+		try {
+			
+			Map<String,String> mapOfKeyToErrorMsg = new HashMap<String,String>();
+			mapOfKeyToErrorMsg.put("login","Email not provided");
+			mapOfKeyToErrorMsg.put("productID","ProductID not provided");
+			
+			Map<String,Object> mapOfResponseInfo = Utilities.checkIfPresentAndNotNull(mapOfKeyToErrorMsg, mapOfParamtersInfo);
+			if(!(Boolean) mapOfResponseInfo.get("success")) {
+				map.put("error_message", mapOfResponseInfo.get("error_message"));
+				return map;
+			}
+			
+			String email = mapOfParamtersInfo.get("login");
+			String productID = mapOfParamtersInfo.get("productID");  
+			
+			mapOfResponseInfo = checkIfLoginAlreadyExist_v1(appID, errorInfo, productID, email);
+			map.putAll(mapOfResponseInfo);
+			
+			success = true;
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , " getContactBasedOnParamters_v1 - Error : " + errorInfo, e);
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+		}		
+		return map;
+	}
+	
+	public static Map<String,Object> linkContactToAccount_v1(String appID, StringBuilder errorInfo, String accountID, List<Contact> listOfContact) {
+		
+		boolean success = false;
+		Map<String,Object> map = new HashMap<>();
+		
+		try {
+			
+			if(Utilities.isEmpty(listOfContact)) {
+				map.put("error_message", "Contacts are empty");
+				return map;
+			}
+			
+			List<String> linkedAccounts = null;
+			for(Contact contact : listOfContact) {
+				
+				linkedAccounts = null;
+				linkedAccounts = contact.getLinkedAccounts();
+				if(Utilities.isNull(linkedAccounts))
+					linkedAccounts = new ArrayList<>();
+				
+				linkedAccounts.add(accountID);	
+				contact.setLinkedAccounts(linkedAccounts);				
+			}
+			
+			listOfContact = ContactDAO.insertContact_v1(listOfContact);
+			
+			success = true;
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , "\n linkContactToAccount_v1 - Error : " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+		}		
+		return map;		
+	}
+
+	public static Contact checkAndCreateDefaultContactMethodForUsers_v1(String appID, StringBuilder requestDetails, StringBuilder errorInfo, Contact contact) {
+				
+		Contact updatedContact = null;
+		try {
+			
+			if(Utilities.isNull(contact))
+				return null;
+			
+			String email = contact.getLogin();
+			List<ContactMethod> linkedContactMethods = contact.getLinkedContactMethods();
+			
+			if(!Utilities.isEmpty(linkedContactMethods)) {
+				
+				String value = null, type = null;
+				for(ContactMethod contactMethod : linkedContactMethods) {
+					
+					value = null;
+					value = contactMethod.getValue(); type = contactMethod.getType();
+					if(StringUtil.isBlank(value) || StringUtil.isBlank(type))
+						continue;
+					
+					if("email".equals(type) && value.equals(email)) 
+						return contact;
+				}				
+			}
+			
+			Map<String,Object> mapOfCMInfo = new HashMap<>();
+			mapOfCMInfo.put("type", "email");
+			mapOfCMInfo.put("title", "office");
+			mapOfCMInfo.put("value", email);
+			List<Map<String,Object>> listOfContactMethodInfoInMap = new ArrayList<>();
+			listOfContactMethodInfoInMap.add(mapOfCMInfo);
+			List<ContactMethod> listOfContactMethodOfTypeEmail = constructContactMethodObj_v1(contact.getAccountID(), contact.getDepartmentID(), listOfContactMethodInfoInMap);
+			
+			if(Utilities.isNull(linkedContactMethods))
+				linkedContactMethods = new ArrayList<>(listOfContactMethodOfTypeEmail);
+			else
+				linkedContactMethods.addAll(listOfContactMethodOfTypeEmail);
+						
+			contact.setLinkedContactMethods(linkedContactMethods);		
+			updatedContact = ContactDAO.updateContact_v1(contact);
+			
+		} catch(Exception e) {
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+			mLogger.log(java.util.logging.Level.SEVERE, "checkAndCreateDefaultContactMethodForUsers_v1 - Error : ", e);
+		} 
+		return updatedContact;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> getReqContactsWithContactSkillSet_v4(String appID, StringBuilder errorInfo, String apiKey, Map<String,Object> mapOfContactInfo) {
+		
+		boolean success = false;
+		List<Contact> listOfContact = null;
+		List<String> listOfContactIDWithAccess = null;
+		List<Map<String,Object>> listOfContactSkillSetInfoAsMap = new ArrayList<Map<String,Object>>();
+		Map<String,Object> map = new HashMap<String,Object>();
+		
+		try {
+			
+			String productID = (String) mapOfContactInfo.get("productID");
+			String accountID = (String) mapOfContactInfo.get("accountID");
+			List<String> listOfContactID = (List<String>) mapOfContactInfo.get("contact");
+			
+			String defaultSkillSetID = Utilities.getSkillSetIDByProduct(productID);
+			
+			if(Utilities.isEmpty(listOfContactID)) {
+				map.put("error_message", "ContactID's are empty");
+				return map;
+			}
+			
+			if(listOfContactID.size() > 10) {
+				map.put("error_message", "Maximum 10 contactID's are allowed");
+				return map;
+			}
+				
+			QueryResultIterator<Entity> contactSkillSetIterator = ContactSkillSetDAO.getContactSkillSet_v3(accountID, listOfContactID, false, defaultSkillSetID);
+			
+			Entity contactSkillSet = null;
+			Set<String> setOfContactIDWithAccess = new HashSet<String>();
+			
+			while ( contactSkillSetIterator.hasNext() ) {			
+				contactSkillSet = contactSkillSetIterator.next();							
+				setOfContactIDWithAccess.add((String) contactSkillSet.getProperty("contactID"));
+				listOfContactSkillSetInfoAsMap.add(Utilities.convertToMap(String.class, contactSkillSet));			
+			}
+			
+			if(Utilities.isEmpty(listOfContactSkillSetInfoAsMap)) {
+				success = true;
+				return map;
+			}
+			
+			listOfContactIDWithAccess = new ArrayList<String>(setOfContactIDWithAccess);
+			
+			listOfContact = ContactDAO.getContacts_v1(listOfContactIDWithAccess);
+			listOfContact = removeDeletedContactMethodAndLocation(listOfContact);
+			
+			success = true;
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , "\n getReqContactsWithContactSkillSet_v3 - Error : " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+			if(success) {				
+				map.put("contact", listOfContact);
+				map.put("contactID", listOfContactIDWithAccess);
+			}
+		}
+		return map;
+	}
+	
+	@SuppressWarnings( "unchecked" )
+	public static void linkExistingOrNewDocumentToContact(String appID, StringBuilder requestDetails, String accountID, String departmentID, Contact contact, 
+	                                                        	Map<String,Object> mapOfContactInfo, Map<String,Object> map) throws Exception {
+		
+		Map<String,Object> mapOfDocumentInput = null, documentInfoMap = null;
+		String documentJSON = "", documentID = "";
+		ObjectMapper mapper = new ObjectMapper();
+		List<String> listOfDocumentID = null;
+		Document document = null;
+		
+		if(Utilities.isEmpty( mapOfContactInfo ) || !mapOfContactInfo.containsKey("linkedDocuments") || Utilities.isNull( contact ))
+			return;
+		
+		mapOfDocumentInput = (Map<String, Object>) mapOfContactInfo.get("linkedDocuments");
+		
+		if(mapOfDocumentInput.containsKey("linkDocuments")){
+			
+			listOfDocumentID = (List<String>) mapOfDocumentInput.get("linkDocuments");
+			documentInfoMap = DocumentService.setLinkedContactsInDocumentsForNewContact(appID, requestDetails, accountID, contact.getID(), listOfDocumentID);
+			if((Boolean) documentInfoMap.get("success")) 
+				contact.setLinkedDocuments(listOfDocumentID);
+			
+		} else if (mapOfDocumentInput.containsKey("documentData")) {
+			
+			documentInfoMap = (Map<String, Object>) mapOfContactInfo.get("linkedDocuments");
+			documentInfoMap.put("contactID", contact.getID());
+			
+			if(!StringUtil.isBlank(departmentID))
+				documentInfoMap.put("departmentID", departmentID);
+			
+			documentJSON = mapper.writeValueAsString(documentInfoMap);
+			documentInfoMap = new HashMap<String, Object>();
+			
+			documentInfoMap = DocumentService.createDocument(appID, requestDetails, accountID, documentJSON);
+			if((Boolean) documentInfoMap.get("success")) {
+				documentID = (String) documentInfoMap.get("documentID");
+				listOfDocumentID = contact.getLinkedDocuments();
+				if(listOfDocumentID == null)
+					listOfDocumentID = new ArrayList<String>();
+				listOfDocumentID.add(documentID);
+				contact.setLinkedDocuments(listOfDocumentID);
+				
+				document = (Document) documentInfoMap.get("document");
+				map.put("document", document);
+				
+			} else if(documentInfoMap.containsKey("error")) {
+				map.put("error",documentInfoMap.get("error"));
+			}
+		}
+	}
+	
+	@SuppressWarnings( "unchecked" )
+	public static void insertHistoryForContact(String appID, StringBuilder requestDetails, String accountID, String departmentID, Contact contact, Map<String,Object> mapOfContactInfo) throws Exception {
+
+		Map<String,Object> mapOfHistoryInfo = null, mapOfInsertedHistoryInfo = null;
+		List<String> listOfHistoryID = null, linkedContactsForHistory = null;
+		String historyInfoAsJSON = "", historyID = "";
+		ObjectMapper mapper = new ObjectMapper();
+		
+		/* To insert History for linked Contact */
+		if(Utilities.isEmpty( mapOfContactInfo ) || !mapOfContactInfo.containsKey("history") || Utilities.isNull( contact ))
+			return;
+			
+		mapOfHistoryInfo = (Map<String,Object>) mapOfContactInfo.get("history");	
+		linkedContactsForHistory = new ArrayList<String>();
+		linkedContactsForHistory.add(contact.getID());
+		mapOfHistoryInfo.put("linkedContacts", linkedContactsForHistory);		
+		
+		if(!StringUtil.isBlank(departmentID))
+			mapOfHistoryInfo.put("departmentID", departmentID);
+		
+		historyInfoAsJSON = mapper.writeValueAsString(mapOfHistoryInfo);
+		
+		mapOfInsertedHistoryInfo = HistoryService.insertHistoryForNewContact_v1(appID, requestDetails, accountID, historyInfoAsJSON);
+		if( (Boolean) mapOfInsertedHistoryInfo.get("success") ) {
+			
+			historyID = (String)mapOfInsertedHistoryInfo.get("id");
+			listOfHistoryID = contact.getLinkedHistory();
+			if(listOfHistoryID == null)
+				listOfHistoryID = new ArrayList<String>();
+			//By KUD - Recent History should be in the top of the List
+			listOfHistoryID.add(0,historyID);
+			contact.setLinkedHistory(listOfHistoryID);
+		}
+	}
+	
+	@SuppressWarnings( "unchecked" )
+	public static void addOrRemoveTags(String appID, StringBuilder requestDetails, String apikey, String departmentID, String contactID, Map<String,Object> mapOfContactInfo,
+	                                   	Map<String,Object> map) throws Exception {
+		
+		//for tags
+		Map<String,Object> mapTagData = new HashMap<String,Object>();
+		ObjectMapper objectMapper = new ObjectMapper();
+		
+		if(mapOfContactInfo.containsKey("tags")) {				
+			Object tagObj = mapOfContactInfo.remove("tags");
+			mapTagData.put("tags", tagObj);								
+		}
+		
+		if(Utilities.isEmpty( mapOfContactInfo ) || (Utilities.isEmpty((List<String>)mapTagData.get("tags")) && Utilities.isEmpty((List<String>)mapOfContactInfo.get("removetags"))))
+			return;
+			
+		Map<String,Object> mapOfTag = null;
+		
+		if(mapOfContactInfo.containsKey("removetags")) {
+			
+			Object object = mapOfContactInfo.remove("removetags");
+			
+			Map<String,Object> mapOfData = new HashMap<String,Object>();
+			
+			mapOfData.put("tags",object);
+			mapOfData.put("entityID",contactID);		
+			
+			String tagJson = objectMapper.writeValueAsString(mapOfData);
+			
+			mapOfTag = TagService.deleteTagForEntity(appID, requestDetails, apikey, tagJson);
+			mapOfTag.remove("success");
+			
+			List<TagInfo> listTagInfo = (List<TagInfo>) mapOfTag.get("taginfo");					
+			map.put("deletedtags", listTagInfo);										
+		}	
+		
+		if(mapTagData.containsKey("tags")) {
+			
+			mapTagData.put("entityID",contactID);
+			mapTagData.put("entityType","contact");
+			
+			if(!StringUtil.isBlank(departmentID))
+				mapOfContactInfo.put("departmentID", departmentID);
+			
+			String tagJson = objectMapper.writeValueAsString(mapTagData);					
+			
+			mapOfTag = TagService.createTag_v2(appID, requestDetails, apikey, tagJson);	
+			mapOfTag.remove("status");
+			
+			map.putAll(mapOfTag);					
+		}
+	}
+	
+	@SuppressWarnings( "unchecked" )
+	public static boolean setLinkedContacts(String appID, StringBuilder requestDetails, String accountID, Map<String,Object> mapOfLinkedContactInfo, Contact contact, Contact linkedContact,
+	                                     		List<Contact> listOfContact) throws Exception {
+		
+		List<String> listOfLinkedContactID = null;
+		boolean isExistingLinkedContact = false;
+		
+		if(!mapOfLinkedContactInfo.isEmpty() && mapOfLinkedContactInfo.containsKey("contactToLink")) {
+			linkedContact = (Contact) mapOfLinkedContactInfo.get("contactToLink");
+			isExistingLinkedContact = (Boolean) mapOfLinkedContactInfo.get("isExistingContact");
+			
+			listOfContact.add(linkedContact);
+			
+			if(!isExistingLinkedContact) {
+				listOfLinkedContactID = contact.getLinkedContacts();
+				if(listOfLinkedContactID == null)
+					listOfLinkedContactID = new ArrayList<String>();
+				
+				listOfLinkedContactID.add(linkedContact.getID());
+				contact.setLinkedContacts(listOfLinkedContactID);
+			}
+		}
+		else if(mapOfLinkedContactInfo.containsKey("linkedContacts")) 
+			contact.setLinkedContacts((List<String>) mapOfLinkedContactInfo.get("linkedContacts"));
+		
+		return isExistingLinkedContact;
+	}
+}

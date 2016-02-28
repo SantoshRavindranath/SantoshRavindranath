@@ -1,0 +1,669 @@
+package com.adaptavant.distributedsource.service;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+
+import com.adaptavant.distributedsource.dao.AccountDAO;
+import com.adaptavant.distributedsource.dao.ContactDAO;
+import com.adaptavant.distributedsource.dao.DataStoreUtil;
+import com.adaptavant.distributedsource.dao.HistoryDAO;
+import com.adaptavant.distributedsource.objects.Account;
+import com.adaptavant.distributedsource.objects.Contact;
+import com.adaptavant.distributedsource.objects.History;
+import com.adaptavant.distributedsource.util.EmailUtil;
+import com.adaptavant.distributedsource.util.Utilities;
+import common.util.StringUtil;
+
+public class MaintenanceService
+	{
+		
+		private static final Logger		    mLogger		     = Logger.getLogger( MaintenanceService.class.getPackage().getName() );
+		
+		@SuppressWarnings( "unchecked" )
+	    public static Map<String,Object> dissociateBulkTaskFromContact( String appID, StringBuilder requestDetails, String accountId, String json ) {
+	   
+	    	boolean status = false;
+	    	
+	    	StringBuilder errorBuilder = null;
+	    	
+	    	List<String> listOfContactId = null;
+	    	List<String> listOfTaskId = null;
+	    	List<String> linkedTasksFrmDb = null;
+	    	List<Contact> linkedContacts = null;
+	    	
+	    	Map<String,Object> mapOfTaskData= new HashMap<String,Object>();
+	    	Map<String,Object> responseMap = new HashMap<String,Object>();
+	    	
+	    	ObjectMapper objMapper = new ObjectMapper();
+	    
+	    try {
+	    	
+	    	mapOfTaskData = objMapper.readValue( json , new TypeReference<Map<String,Object>>(){} );
+	    	
+	    	listOfContactId = (List <String>) mapOfTaskData.get( "linkedContacts" );
+	    	listOfTaskId = (List<String>) mapOfTaskData.get( "linkedTasks" );
+	    	
+	    	linkedContacts = ContactDAO.getContacts_v1( accountId , listOfContactId );
+	    	
+	    	for( Contact contactInItr : linkedContacts ) {
+	    		
+	    		linkedTasksFrmDb = contactInItr.getLinkedTasks();
+	    		
+	    		if( linkedTasksFrmDb != null ) {
+	    			linkedTasksFrmDb.removeAll( listOfTaskId );
+	    		}
+	    	}
+	    	ContactDAO.updateContact_v1( linkedContacts );
+	    	
+	    	status = true;
+	    }    
+	    catch( Exception e ) {
+	    	status = false;
+	    	errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "JSON : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append("accountID : ").append(accountId);			
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			mLogger.log(Level.SEVERE , "\n " + errorBuilder, e );    	
+	    }
+	    
+	    finally {        	
+	    	responseMap.put( "status" , status );        	
+	    }
+	     
+	    return responseMap;
+	    	
+	    } 
+		
+		@SuppressWarnings( "unchecked" )
+	    public static Map<String,Object> dissociateTaskFromAccounts( String appID, StringBuilder requestDetails, String accountId, String accountsID, String json ) {
+	 	   
+	 	   boolean status = false;
+	 	   
+	 	   String taskId = "";
+	 	   
+	 	   StringBuilder errorBuilder = null;
+	 	   
+		   List<String> listOfTaskId = null, listOfLinkedTasksOfAccount = null;
+	 	   
+	 	   Map<String,Object> mapOfInput = null;
+	 	   Map<String,Object> responseMap = new HashMap<String,Object>();
+		   Account account = null;
+	 	   ObjectMapper objMapper = new ObjectMapper();
+	 	   
+	 	   try {
+	 		   
+	 		   mapOfInput = objMapper.readValue( json , new TypeReference<Map<String,Object>>(){} );
+	 		   
+	 		   listOfTaskId = (List <String>) mapOfInput.get( "linkedtasks" );
+	 		   taskId = listOfTaskId.get( 0 );
+	 		   
+	 		   account = DataStoreUtil.getObjectByID( Account.class , accountsID );
+			   listOfLinkedTasksOfAccount = account.getLinkedTasks();
+			   
+			   if(listOfLinkedTasksOfAccount != null && !listOfLinkedTasksOfAccount.isEmpty()) {
+	 		   
+				   listOfLinkedTasksOfAccount.remove(taskId);
+				   account.setLinkedTasks(listOfLinkedTasksOfAccount);
+				   AccountDAO.updateAccount(account);
+			   }
+	 		   status = true;
+	 	   } 	   
+	 	   catch( Exception e ) {
+	 		   	status = false;
+	 		   	errorBuilder = new StringBuilder();
+				errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+				errorBuilder.append( "JSON : " ).append( json ).append( "<br/></br>" );
+				errorBuilder.append("accountID : ").append(accountId).append("<br/></br>").append( "accountsID : " )
+				.append( accountsID );				
+				EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+				mLogger.log(Level.SEVERE , "\n " + errorBuilder, e );
+	 	   }	   
+	 	   finally { 		   
+	 		   responseMap.put( "status" , status );		   
+	 	   }
+	 	   return responseMap;	   
+	    }
+		
+		@SuppressWarnings( "unchecked" )
+	    public static Map<String,Object> dissociateBulkTaskFromAccounts( String appID, StringBuilder requestDetails, String accountId, String json ) {
+	   
+	    	boolean status = false;
+	    	
+	    	StringBuilder errorBuilder = null;
+	    	
+	    	List<String> listOfAccountsId = null;
+	    	List<String> listOfTaskId = null;
+	    	List<String> accountsTaskId = null;
+	    	List<Account> accountsToUpdate = null;
+	    	Map<String,Object> mapOfTaskData= new HashMap<String,Object>();
+	    	Map<String,Object> responseMap = new HashMap<String,Object>();
+	    	
+	    	ObjectMapper objMapper = new ObjectMapper();
+	    
+	    try {
+	    	
+	    	mapOfTaskData = objMapper.readValue( json , new TypeReference<Map<String,Object>>(){} );
+	    	
+	    	listOfAccountsId = (List <String>) mapOfTaskData.get( "linkedAccounts" );
+	    	listOfTaskId = (List<String>) mapOfTaskData.get( "linkedTasks" );
+	    	
+		if( listOfAccountsId != null && !listOfAccountsId.isEmpty() ) {
+	    	
+			accountsToUpdate = AccountDAO.getAccounts_v1(false , listOfAccountsId);
+	    	
+				for(Account accountFromItr : accountsToUpdate) {
+					
+					accountsTaskId = accountFromItr.getLinkedTasks();
+					accountsTaskId.removeAll(listOfTaskId);
+					accountFromItr.setLinkedTasks(accountsTaskId);				
+				}
+				AccountDAO.updateAccount(accountsToUpdate);
+		}
+	    	status = true;
+	    }    
+	    catch( Exception e ) {  
+	    	status = false;    
+	    	errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "JSON : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append("accountID : ").append(accountId);			
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			mLogger.log(Level.SEVERE , "\n " + errorBuilder, e ); 
+	    }    
+	    finally {        	
+	    	responseMap.put( "status" , status );        	
+	    }
+	    return responseMap;
+	  }
+		
+		public static Map<String,Object> associateContactToAccount( String appID, StringBuilder requestDetails, String apikey, String accountsID,
+					String contactID) {
+						
+			boolean status = false;
+			
+			List<String> linkedContacts = null;
+			
+			Map<String,Object> responseMap = new HashMap<String,Object>();
+			
+			StringBuilder errorBuilder = null;
+			Account account = null, updatedAccount = null;
+			
+			try {
+			
+				account = DataStoreUtil.getObjectByID( Account.class , accountsID );
+				
+				if( account != null ) {
+				
+					linkedContacts = account.getLinkedContacts();
+					
+					if( linkedContacts == null || linkedContacts.isEmpty() )
+					linkedContacts = new ArrayList<String>();
+					
+					if(!linkedContacts.contains(contactID))
+					linkedContacts.add( contactID );			   
+					
+					account.setLinkedContacts(linkedContacts);
+					updatedAccount =  AccountDAO.updateAccount( account );
+				}		   
+				status = true;		   
+			}
+			catch( Exception e ) {
+				status = false;
+				errorBuilder = new StringBuilder();
+				errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+				errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+				errorBuilder.append("accountsID : ").append(accountsID).append("<br/></br>").append( "contactID : " )
+				.append( contactID );				
+				EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+				mLogger.log(Level.SEVERE , "\n associateContactToAccount " + errorBuilder, e );
+			}
+			finally {
+				responseMap.put( "status" , status );
+				responseMap.put( "account" , updatedAccount );
+			}
+			return responseMap;	   
+		}
+		
+		public static Map<String,Object> dissociateContactFromAccount( String appID, StringBuilder requestDetails, String apikey, String accountsID, String contactID) {
+			
+			   boolean status = false;	
+
+			   List<String> linkedContacts = null;
+
+			   Map<String,Object> responseMap = new HashMap<String,Object>();
+
+			   StringBuilder errorBuilder = null;
+			   Account account = null, updatedAccount = null;
+
+			   try {
+
+				   account = DataStoreUtil.getObjectByID( Account.class , accountsID );
+
+				   if( account != null ) {
+
+					   linkedContacts = account.getLinkedContacts();
+
+					   if( linkedContacts != null && !linkedContacts.isEmpty() )
+						   linkedContacts.remove( contactID );			   
+
+					   updatedAccount =  AccountDAO.updateAccount( account );
+				   }		   
+				   status = true;		   
+			   }
+			   catch( Exception e ) {
+				   status = false;
+				   errorBuilder = new StringBuilder();
+				   errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+				   errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+				   errorBuilder.append("accountsID : ").append(accountsID).append("<br/></br>").append( "contactID : " )
+				   .append( contactID );				
+				   EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+				   mLogger.log(Level.SEVERE , "\n dissociateContactFromAccount " + errorBuilder, e );
+			   }
+			   finally {
+				   responseMap.put( "status" , status );
+				   responseMap.put( "account" , updatedAccount );
+			   }
+			   return responseMap;	   
+		   }
+		
+		public static Map<String,Object> dissociateAccountFromContact( String appID, StringBuilder requestDetails, String apikey, String accountsID, String contactID) {
+			
+			   boolean status = false;	
+
+			   List<String> linkedAccounts = null;
+
+			   Map<String,Object> responseMap = new HashMap<String,Object>();
+
+			   StringBuilder errorBuilder = null;
+			   Contact contact = null, updatedContact = null;
+
+			   try {
+
+				   contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+
+				   if( contact != null ) {
+
+					   linkedAccounts = contact.getLinkedAccounts();
+
+					   if( linkedAccounts != null && !linkedAccounts.isEmpty() )
+						   linkedAccounts.remove( accountsID );			   
+
+					   updatedContact = ContactDAO.updateContact_v1(contact);
+				   }		   
+				   status = true;		   
+			   }
+			   catch( Exception e ) {
+				   status = false;
+				   errorBuilder = new StringBuilder();
+				   errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+				   errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+				   errorBuilder.append("accountsID : ").append(accountsID).append("<br/></br>").append( "contactID : " )
+				   .append( contactID );				
+				   EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+				   mLogger.log(Level.SEVERE , "\n dissociateContactFromAccount " + errorBuilder, e );
+			   }
+			   finally {
+				   responseMap.put( "status" , status );
+				   responseMap.put( "contact" , updatedContact );
+			   }
+			   return responseMap;	   
+		   }
+		
+		public static Map<String,Object> dealToHistory( String apikey, String dealIDStr, String historyID, String operation ) {
+			   
+			   boolean status = false;	   
+			   Long dealID = null;	   
+			   History historyObj = null, updatedHistory = null;	   
+			   Map<String,Object> map = new HashMap<String,Object>();
+			   
+			   try {
+				   
+				   dealID = new Long(dealIDStr);
+				   
+				   historyObj = DataStoreUtil.getObjectByID( History.class , historyID );
+				   
+				   if("associate".equals(operation)) {			   			 
+					   
+					   if(historyObj != null) {						   
+						   historyObj.setLinkedDeal(dealID);				   				   				  
+						   updatedHistory = HistoryDAO.updateHistory_v1(historyObj);
+					   }			   			   			  
+				   }
+				   else if("dissociate".equals(operation)) {
+					   
+					   if(historyObj != null) {				   				   
+						   historyObj.setLinkedDeal(null);
+						   updatedHistory = HistoryDAO.updateHistory_v1(historyObj);
+					   }			   
+				   }
+				   status = true;
+			   }
+			   catch(Exception e) {
+				   mLogger.log(java.util.logging.Level.SEVERE,"Exception in RelationshipService, dealToHistory",e);
+			   }
+			   finally {
+				   map.put("status",status);
+				   map.put("updatedhistory",updatedHistory);
+			   }
+			   return map;
+	}
+		
+	public static Map<String,Object> contactToHistory( String apikey, String contactID, String historyID, String operation ) {
+		   
+		   boolean status = false;	
+		   String contactIDValue = null;
+		   History historyObj = null;	   	   
+		   Map<String,Object> map = new HashMap<String,Object>();
+		   
+		   try {
+			   		   		   
+			   historyObj = DataStoreUtil.getObjectByID( History.class , historyID );
+			   
+			   if("associate".equals(operation)) {			   			 
+				   
+				   if(historyObj != null) {
+					   contactIDValue = historyObj.getLinkedContact();
+					   	
+					   if(!StringUtil.isBlank(contactIDValue))				   				   
+						   historyObj.setLinkedContact(contactIDValue);
+					   
+					   HistoryDAO.updateHistory_v1(historyObj);
+				   }			   			   			  
+			   }
+			   else if("dissociate".equals(operation)) {
+				   
+				   if(historyObj != null) {				 			
+					   historyObj.setLinkedContact(null);
+					   HistoryDAO.updateHistory_v1(historyObj);
+				   }			   
+			   }
+			   status = true;
+		   }
+		   catch(Exception e) {
+			   mLogger.log(java.util.logging.Level.SEVERE,"Exception in RelationshipService, contactToHistory",e);
+		   }
+		   finally {
+			   map.put("status",status);
+		   }
+		   return map;
+	 }
+	
+	public static Map<String,Object> historyToAccounts( String apikey, String accountsID, String historyID, String operation ) {
+		   
+		   boolean status = false;	   
+		   	   
+		   Account accountObj = null;
+		   List<String> linkedHistory = null;	   
+		   Map<String,Object> map = new HashMap<String,Object>();
+		   
+		   try {
+			   		   		   
+
+			   accountObj = DataStoreUtil.getObjectByID( Account.class , accountsID );
+			   
+			   if("associate".equals(operation)) {			   			 
+				   
+				   if(accountObj != null) {
+					   
+					   linkedHistory = accountObj.getLinkedHistory();
+					   
+					   if(Utilities.isEmpty(linkedHistory))
+						   linkedHistory = new ArrayList<String>();
+					   
+					   if(!linkedHistory.contains(historyID))
+						   linkedHistory.add(historyID);
+					   
+					   accountObj.setLinkedHistory(linkedHistory);
+					   
+					   AccountDAO.updateAccount(accountObj);
+					   map.put("account", accountObj);
+				   }			   			   			  
+			   }
+			   else if("dissociate".equals(operation)) {
+				   
+				   if(accountObj != null) {
+					   linkedHistory = accountObj.getLinkedHistory();				   
+					   linkedHistory.remove(historyID);				   
+					   
+					   accountObj.setLinkedHistory(linkedHistory);
+					   
+					   accountObj = AccountDAO.updateAccount(accountObj);
+					   map.put("account", accountObj);
+				   }			   
+			   }
+			   status = true;
+		   }
+		   catch(Exception e) {
+			   mLogger.log(java.util.logging.Level.SEVERE,"Exception in RelationshipService, historyToAccounts , "
+			   		+ "accountsID : " +accountsID+"\n apikey :  " +apikey+"\n historyID : " +historyID
+			   		+"\n operation : " +operation,e);
+		   }
+		   finally {
+			   map.put("status",status);
+		   }
+		   return map;
+	 }
+	
+	public static Map<String,Object> associateAccountToContact( String appID, StringBuilder requestDetails, String apikey, String accountsID, String contactID) {
+		 
+		 boolean status = false;
+	
+		 List<String> linkedAccounts = null;
+	
+		 Map<String,Object> responseMap = new HashMap<String,Object>();
+	
+		 StringBuilder errorBuilder = null;
+		 Contact contact = null, updatedContact= null;
+	
+		 try {
+			 contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+	
+			 if( contact != null ) {
+	
+				 linkedAccounts = contact.getLinkedAccounts();
+	
+				 if( linkedAccounts == null || linkedAccounts.isEmpty() )
+					 linkedAccounts = new ArrayList<String>();
+	
+				 if(!linkedAccounts.contains(accountsID))
+					 linkedAccounts.add( accountsID );			   
+	
+				 contact.setLinkedAccounts(linkedAccounts);
+				 updatedContact =  ContactDAO.updateContact_v1(contact);
+			 }		   
+			 status = true;		   
+		 }
+		 catch( Exception e ) {
+			 status = false;
+			 errorBuilder = new StringBuilder();
+			 errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			 errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+			 errorBuilder.append("accountsID : ").append(accountsID).append("<br/></br>").append( "contactID : " )
+			 .append( contactID );				
+			 EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			 mLogger.log(Level.SEVERE , "\n associateAccountToContact " + errorBuilder, e );
+		 }
+		 finally {
+			 responseMap.put( "status" , status );
+			 responseMap.put( "contact" , updatedContact );
+		 }
+		 return responseMap;	   
+	}
+	
+	@SuppressWarnings( "unchecked" )
+   	public static Map<String,Object> associateDealsToContacts(String appID, StringBuilder requestDetails, String accountId, String json ) {
+	   
+	   boolean status = false;
+	   
+	   String dealIDInStr = "", newContactJson = "";
+	   
+	   List<Object> listOfDealIdObj = null;
+	   List<String> listOfContactId = null;
+	   List<Long> listOfDealId = new ArrayList<Long>();
+	   List<Contact> listOfContactFrmDb = null, listOfNewContacts = null;
+	   List<Long> tempListOfLinkedDeals = null;
+	   
+	   Set<Long> tempSetOfLinkedDeals = new HashSet<Long>();
+	   
+	   Map<String,Object> mapOfInput = null;
+	   Map<String,Object> resultMap = new HashMap<String,Object>(), responseMap = null;
+	   
+	   Long dealID = 0L;
+	   ObjectMapper objMapper = new ObjectMapper();
+	   
+	   Map<String, Object> newContactMap = null;
+	   
+	   try {
+		   
+		   mapOfInput = objMapper.readValue( json , new TypeReference<Map<String,Object>>(){} );
+		   
+		   listOfContactId = (List <String>) mapOfInput.get( "linkedContacts" );
+		   listOfDealIdObj = (List <Object>) mapOfInput.get( "linkedDeals" );
+		   
+		   if( listOfDealIdObj != null && !listOfDealIdObj.isEmpty() ) {
+			   
+			   			   
+			   for( Object dealIdInItr : listOfDealIdObj ) {
+					
+					dealIDInStr = String.valueOf( dealIdInItr );
+					
+					if( StringUtil.isBlank(dealIDInStr) || "null".equalsIgnoreCase(dealIDInStr) ) {
+						continue;
+					}
+					else {
+						dealID = Long.valueOf( dealIDInStr );
+					}				
+					listOfDealId.add( dealID );
+				}
+			   
+			   
+			   if(listOfContactId != null && !listOfContactId.isEmpty())
+				   listOfContactFrmDb =  ContactDAO.getContacts_v1( accountId , listOfContactId );
+
+			   
+			   if(mapOfInput.containsKey("newcontact")) {
+				   
+				   newContactMap = (HashMap<String, Object>) mapOfInput.get("newcontact");
+				   
+				   newContactJson = objMapper.writeValueAsString(newContactMap);
+				   
+				   responseMap =  ContactService.createContact_v1(appID, requestDetails, accountId, newContactJson);
+				   
+				   if(responseMap == null || ! (Boolean) responseMap.get("success"))
+					   throw new Exception("Unable to create new contact");
+				   
+				   listOfNewContacts = (ArrayList<Contact>) responseMap.get("contact");
+				   
+				   for(Contact tempContact : listOfNewContacts) {
+					   
+					   if("Person".equalsIgnoreCase(tempContact.getCategory())) {
+						   
+						   if(listOfContactFrmDb == null || listOfContactFrmDb.isEmpty())
+							   listOfContactFrmDb = new ArrayList<Contact>();
+						   
+						   listOfContactFrmDb.add(tempContact);
+						   break;
+					   }
+				   }
+				   
+				   resultMap.put("newcontact", listOfNewContacts);
+					   
+			   }
+			      
+			   if( listOfContactFrmDb != null ) {
+				   
+				   for( Contact contactInItr : listOfContactFrmDb ) {
+					   
+					   tempListOfLinkedDeals = contactInItr.getLinkedDeals();
+					   
+					   if(tempListOfLinkedDeals == null || tempListOfLinkedDeals.isEmpty())   	
+						   contactInItr.setLinkedDeals( listOfDealId );
+					   else {
+						   
+						   tempListOfLinkedDeals.addAll(listOfDealId);
+						   tempSetOfLinkedDeals.addAll(tempListOfLinkedDeals);
+						   tempListOfLinkedDeals = new ArrayList<Long>(tempSetOfLinkedDeals);
+						   contactInItr.setLinkedDeals(tempListOfLinkedDeals);
+					   }
+					
+				   }
+				   
+				   ContactDAO.updateContact_v1( listOfContactFrmDb );
+			   }
+		   }   		   
+		   status = true;
+	   }	   
+	   catch( Exception e ) {
+		   mLogger.log( java.util.logging.Level.SEVERE , "Exception Incurred While Associating deals to contacts , method - associateDealsToContacts , accountId : " +accountId +"\n json : " +json , e );
+	   }
+	   finally {
+		   resultMap.put( "status" , status );
+	   }
+	   return resultMap;	   
+   }
+	
+	/*@SuppressWarnings("unchecked")
+	public static Map<String,Object> accountsToHistory( String apikey, String operation, String json ) {
+	   
+	   boolean status = false;	 
+	   
+	   String accountsID = null;
+	   	   
+	   List<History> listHistory = null;
+	   List<String> listHistoryID = null, linkedAccounts = null, listAccountsID = null;	   
+	   Map<String,Object> map = new HashMap<String,Object>(), mapInput = null;
+	   
+	   ObjectMapper mapper = new ObjectMapper();
+	   
+	   try {
+		   		   		   
+		   mapInput = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
+		   
+		   listHistoryID =  (List<String>) mapInput.get("history");		
+		   listAccountsID = (List<String>) mapInput.get("accounts");
+		   
+		   listHistory =  HistoryDAO.getHistoryByID_v1(listHistoryID);		   		   
+		   
+		   if("associate".equals(operation)) {			   			 
+			   
+			   if(!Utilities.isEmpty(listHistory)) {
+				   				   
+				   for(History history : listHistory) {					   
+					   accountsID =  history.getLinkedAccountID();					   
+					   history.setAccountID(accountsID);
+				   }				 
+			   }			   			   			  
+		   }
+		   else if("dissociate".equals(operation)) {
+			   
+			   if(!Utilities.isEmpty(listHistory)) {   				   
+				   for(History history : listHistory) {					   					   
+					   history.setLinkedAccountID(null);
+				   }				   				 
+			   }			   			   
+		   }		   
+		   listHistory = HistoryDAO.updateHistory(listHistory);		   
+		   status = true;
+	   }
+	   catch(Exception e) {
+		   mLogger.log(java.util.logging.Level.SEVERE,"Exception in RelationshipService, accountsToHistory , "
+		   		+ "json : " +json+"\n operation :  " +operation+"\n apikey : " +apikey,e);
+	   }
+	   finally {
+		   map.put("status",status);
+		   map.put("history",listHistory);
+	   }
+	   return map;
+	}*/
+}

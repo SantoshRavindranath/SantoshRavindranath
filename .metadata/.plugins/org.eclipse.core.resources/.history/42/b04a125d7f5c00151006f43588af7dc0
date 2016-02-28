@@ -1,0 +1,1852 @@
+package com.adaptavant.distributedsource.service;
+
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.logging.Logger;
+
+import org.apache.commons.codec.binary.Base64;
+import org.apache.commons.io.IOUtils;
+import org.codehaus.jackson.JsonNode;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+
+import com.adaptavant.distributedsource.dao.AccountDAO;
+import com.adaptavant.distributedsource.dao.ContactDAO;
+import com.adaptavant.distributedsource.dao.DataStoreUtil;
+import com.adaptavant.distributedsource.dao.DocumentDAO;
+import com.adaptavant.distributedsource.objects.Account;
+import com.adaptavant.distributedsource.objects.Contact;
+import com.adaptavant.distributedsource.objects.Document;
+import com.adaptavant.distributedsource.objects.SearchIndex;
+import com.adaptavant.distributedsource.util.EmailUtil;
+import com.adaptavant.distributedsource.util.Utilities;
+import com.google.appengine.api.datastore.Entity;
+import com.google.appengine.api.datastore.Key;
+import com.google.appengine.api.datastore.KeyFactory;
+import com.google.appengine.api.datastore.QueryResultIterator;
+import com.google.appengine.tools.cloudstorage.GcsFileOptions;
+import com.google.appengine.tools.cloudstorage.GcsFilename;
+import com.google.appengine.tools.cloudstorage.GcsInputChannel;
+import com.google.appengine.tools.cloudstorage.GcsOutputChannel;
+import com.google.appengine.tools.cloudstorage.GcsService;
+import com.google.appengine.tools.cloudstorage.GcsServiceFactory;
+import common.util.StringUtil;
+
+public class DocumentService {
+	
+	private static final Logger mLogger =  Logger.getLogger(DocumentService.class.getPackage().getName());
+	
+	private static final String	dsGCSBucketName		   = Utilities.getStringBasedOnMode( "dsGCSBucketName" );
+	private static final List<String> permissibleMimeTypes = Arrays.asList("application/msword", "application/pdf", "application/rss+xml", "application/rtf", "application/x-rtf",
+															"application/vnd.google-earth.kml+xml", "application/vnd.google-earth.kmz", 
+															"application/vnd.ms-excel", "application/vnd.ms-powerpoint",
+															"application/vnd.oasis.opendocument.presentation", "application/vnd.oasis.opendocument.spreadsheet",
+															"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+															"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+															"application/vnd.openxmlformats-officedocument.presentationml.presentation",
+															"application/vnd.oasis.opendocument.text", "application/vnd.sun.xml.calc", "application/vnd.sun.xml.writer",
+															"application/zip", "application/x-gzip", "audio/basic", "audio/flac", "audio/mid", "audio/mp4", "audio/mpeg", 
+															"audio/ogg", "audio/x-aiff", "audio/x-wav", "image/gif", "image/jpeg", "image/png", "image/tiff", 
+															"image/vnd.wap.wbmp", "image/x-ms-bmp", "text/calendar", "text/comma-separated-values", 
+															"text/css", "text/html", "text/plain", "text/x-vcard", "video/mp4", "video/mpeg", "video/ogg", 
+															"video/quicktime", "video/x-msvideo", "application/xml", "application/vnd.xmi+xml", "audio/basic",
+															"text/csv", "audio/x-ms-wma", "application/rtf", "application/vnd.google-apps.document", "application/vnd.google-apps.presentation",
+															"application/vnd.google-apps.spreadsheet", "application/vnd.google-apps.drawing", "application/ms-tnef");
+	private static final List<String> imageTypes = Arrays.asList("image/jpeg", "image/png", "image/gif", "image/tiff");
+	
+	
+	public static Map<String, Object> createDocument(String appID, StringBuilder requestDetails,String accountID, String json) {
+		
+		StringBuilder errorBuilder = null;
+		boolean success = false, isSearchIndexCreated = false, isDocumentCreated = false, isAccountUpdated = false;
+		Map<String, Object> map = new HashMap<String, Object>();
+		ObjectMapper mapper = new ObjectMapper();
+		Map<String, Object> contactMap = null;
+		List<String> linkedContacts = new ArrayList<String>();
+		String contactID = null, mimeType = "", fileName = "", fileData, userID = "";
+		byte[] fileDataInBytes;
+		String fileID = UUID.randomUUID().toString();
+		Long fileSize = null;
+		Document persistedDocument = null;
+		List<SearchIndex> persistedIndex = null;
+		Account account = null;
+		Double documentsSpace  = null;
+		List<Document> documents = new ArrayList<Document>();
+		
+		try {
+			
+			contactMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			contactID = (String) contactMap.get("contactID");
+			fileData = (String) contactMap.get("documentData");
+			mimeType = (String) contactMap.get("type");
+			fileName = (String) contactMap.get("name");
+			userID = (String) contactMap.get("ownerID");
+			String departmentID = (String) contactMap.get("departmentID");
+			
+			if(StringUtil.isBlank(mimeType) || StringUtil.isBlank(fileName) || StringUtil.isBlank(contactID) ||  
+					StringUtil.isBlank(mimeType))
+				throw new Exception("Certain key(s) for creating a document are missing");
+			
+		   Base64 base64 = new Base64();
+		   fileDataInBytes = base64.decode(fileData.getBytes());
+		   fileSize = new Long(fileDataInBytes.length);
+		   
+		   if(fileSize < 1 || fileSize > 5120000)
+			   throw new Exception("Document size ("+fileSize+") is larger than 5120000 bytes or less than 1 byte");
+		   if(StringUtil.isBlank(mimeType) || !permissibleMimeTypes.contains(mimeType))
+			   throw new Exception("Document type is not PDF, DOC, DOCX, XLS, XLSX, RTF, ODT, XML, JPG, GIF, TIFF, PNG, PPS, PPT or PPTX");
+		   
+		   account = DataStoreUtil.getObjectByID( Account.class , accountID );
+		   documentsSpace = account.getDocumentsSpace();
+		   if(documentsSpace == null)
+			   documentsSpace = 0D;
+		   documentsSpace = documentsSpace + (fileSize.doubleValue() / 1048576);
+		   
+		   if(documentsSpace >  512 && !accountID.equals("SEN42")) {
+			   map.put("error","Looks like you have reached the maximum limit for document storage (512 MB) for a free account in Distributed Source. Please upgrade your account for more storage and lots of other benefits.");
+			   return map;
+		   }
+		   
+		   GcsFilename gcsFilename = null;
+		   if("SEN42".equals(accountID))
+			   gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+departmentID+"/documents/"+fileID);
+		   else
+			   gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+fileID);
+			
+		   GcsService gcsService = GcsServiceFactory.createGcsService();
+		    GcsFileOptions options = new GcsFileOptions.Builder()
+		       .mimeType(mimeType)
+		       .acl("project_private")
+		       .addUserMetadata("name",fileName)
+		       .addUserMetadata("accountID", accountID).build();
+		    
+		    GcsOutputChannel writeChannel = gcsService.createOrReplace(gcsFilename, options);
+		     writeChannel.waitForOutstandingWrites();
+		     
+		     writeChannel.write(ByteBuffer.wrap
+		               (base64.decode(fileData.getBytes())));
+		     writeChannel.close();
+		     
+		     Document document = new Document();
+		     document.setBucketName(dsGCSBucketName);
+		     document.setDeleted(false);
+		     document.setID(fileID);
+		     //document.setPath(path);
+		     document.setName(fileName);
+		     document.setType(mimeType);
+		     document.setSize(fileSize);
+		     document.setOwnerID(userID);
+		     	linkedContacts.add(contactID);
+		     document.setLinkedContacts(linkedContacts);
+		     document.setAccountID(accountID);
+		     
+		     if(!StringUtil.isBlank(departmentID))
+		    	 document.setDepartmentID(departmentID);
+		    	 
+		     persistedDocument = DataStoreUtil.write(document);
+		     if(persistedDocument != null)
+		    	 isDocumentCreated = true;
+		     
+		     if(isDocumentCreated) {
+		    	 account.setDocumentsSpace(documentsSpace);
+		    	 AccountDAO.updateAccount(account);
+		    	 isAccountUpdated = true;
+		     }
+		     
+		     documents.add(document);
+		    persistedIndex = SearchService.updateSearchIndexForDocument(documents);
+		    
+		    if(persistedIndex != null)
+		    	 isSearchIndexCreated = true;
+		     
+		     map.put("document", document);
+		     map.put("documentID", document.getID());
+
+		     SearchService.updateAttachmentDocumentsInIndex(appID, requestDetails, accountID, documents);
+			 
+		     success = true;
+			
+		} catch(Exception e) {
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isAccountUpdated : " ).append( isAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentCreated : " ).append( isDocumentCreated ).append( "<br/></br>" );
+			//errorBuilder.append( "isSearchIndexCreated : " ).append( isSearchIndexCreated ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n json: "+json+"\n isAccountUpdated:"+ 
+							isAccountUpdated+"\n isSearchIndexCreated: "+isSearchIndexCreated+ " isDocumentCreated: "+isDocumentCreated, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		} 
+		return map;
+	}
+	
+	public static Map<String, Object> setLinkedContactsInDocumentsForNewContact(String appID, StringBuilder requestDetails,String accountID, String contactID,List<String> listOfDocumentID ){
+		
+		Map<String, Object> map = new HashMap<String, Object>();
+		List<Document> listOfDocuments = null;
+		List<String> linkedContacts = null;
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		
+		try{
+			
+			listOfDocuments = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+			
+			if(listOfDocuments == null || listOfDocuments.isEmpty())
+				throw new Exception("Unable to fetch documents for given IDs");
+			
+			for(Document document : listOfDocuments){
+				
+				linkedContacts = document.getLinkedContacts();
+				if(linkedContacts == null)
+					linkedContacts = new ArrayList<String>();
+				if(!linkedContacts.contains(contactID))
+					linkedContacts.add(contactID);
+				
+				document.setLinkedContacts(linkedContacts);
+					
+			}
+			
+			DataStoreUtil.batchWrite(listOfDocuments);
+			
+			success = true;
+			
+		} catch(Exception e){
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "contactID : " ).append( contactID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n contactID: "+contactID+" \n listOfDocumentID: "+listOfDocumentID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+	
+	public static Map<String, Object> setLinkedContactsInDocuments(String appID, StringBuilder requestDetails,String accountID, String contactID,List<String> listOfDocumentID ){
+		
+		Map<String, Object> map = new HashMap<String, Object>();
+		List<Document> listOfDocuments = new ArrayList<Document>(), listOfDocumentsToBeDissociated = null;
+		List<String> linkedContacts = null, linkedDocuments = null;
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		Contact contact = null;
+		List<String> docsToBeDissociated = null, tempList = null;
+		GcsService gcsService = null;
+		GcsFilename gcsFilename = null;
+		Double spaceToBeDeducted = 0D, documentsSpace = 0D;
+		Account parentAccount = null;
+		
+		try{
+
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			linkedDocuments = contact.getLinkedDocuments();
+			
+			if(linkedDocuments != null && !linkedDocuments.isEmpty()){
+				
+				tempList = new ArrayList<String>(linkedDocuments);
+				
+				if(listOfDocumentID != null)
+					linkedDocuments.removeAll(listOfDocumentID);
+
+				docsToBeDissociated = new ArrayList<String>(linkedDocuments);
+				linkedDocuments = new ArrayList<String>(tempList);
+			}
+			
+			if(listOfDocumentID != null && !listOfDocumentID.isEmpty()) {
+			
+				listOfDocuments = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+			
+				if(listOfDocuments == null || listOfDocuments.isEmpty())
+					throw new Exception("Unable to fetch documents for given IDs");
+				
+				for(Document document : listOfDocuments){
+					
+					linkedContacts = document.getLinkedContacts();
+					if(linkedContacts == null)
+						linkedContacts = new ArrayList<String>();
+					if(!linkedContacts.contains(contactID))
+						linkedContacts.add(contactID);
+					
+					document.setLinkedContacts(linkedContacts);
+						
+				}
+			}
+			
+			if(docsToBeDissociated != null && !docsToBeDissociated.isEmpty()) {
+				
+				gcsService = GcsServiceFactory.createGcsService();
+				listOfDocumentsToBeDissociated = DocumentDAO.getDocuments(accountID, docsToBeDissociated);
+				
+				if(listOfDocumentsToBeDissociated == null || listOfDocumentsToBeDissociated.isEmpty())
+					throw new Exception("Unable to fetch documents for given IDs");
+				
+				for(Document document : listOfDocumentsToBeDissociated){
+					
+					linkedContacts = document.getLinkedContacts();
+					if(linkedContacts != null)	
+						linkedContacts.remove(contactID);
+					
+					if(linkedContacts != null && linkedContacts.isEmpty() && Utilities.isEmpty(document.getLinkedAccounts()) &&
+							       Utilities.isEmpty(document.getLinkedDeals()) && Utilities.isEmpty(document.getLinkedTasks())) {
+						
+						if("SEN42".equals(accountID))
+							gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+document.getDepartmentID()+"/documents/"+document.getID());
+						else
+							gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+document.getID());
+						
+						gcsService.delete(gcsFilename);
+						document.setDeleted(true);
+						spaceToBeDeducted = spaceToBeDeducted + (document.getSize().doubleValue() / 1048576 );
+						
+					} else 
+						docsToBeDissociated.remove(document.getID());
+					
+					document.setLinkedContacts(linkedContacts);
+				}
+				
+				if(!Utilities.isEmpty(docsToBeDissociated)) {
+					
+					SearchService.deleteContactIndex_v1(appID, requestDetails, accountID, docsToBeDissociated);
+					SearchService.deleteDocumentsFromIndex(appID, requestDetails, accountID, docsToBeDissociated);
+				}	
+				
+				parentAccount = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + accountID+ "' && deleted == false");
+				documentsSpace = parentAccount.getDocumentsSpace();
+				documentsSpace = documentsSpace - spaceToBeDeducted;
+				parentAccount.setDocumentsSpace(documentsSpace);
+				AccountDAO.updateAccount(parentAccount);
+				
+				listOfDocuments.addAll(listOfDocumentsToBeDissociated);
+			}
+			
+			DataStoreUtil.batchWrite(listOfDocuments);
+			
+			success = true;
+			
+		} catch(Exception e){
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "contactID : " ).append( contactID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n contactID: "+contactID+" \n listOfDocumentID: "+listOfDocumentID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+	
+	public static Map<String, Object> getDocumentsForOneContact(String appID, StringBuilder requestDetails, String accountID, String contactID) {
+		
+		Map<String, Object> mapOfDocumentInfo = new HashMap<String, Object>();
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		List<Document> listOfDocuments = null;
+		List<String> linkedDocuments = null;
+		Contact contact = null;
+		try {
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );			
+			linkedDocuments = contact.getLinkedDocuments();
+			
+			if(!Utilities.isEmpty(linkedDocuments)) {
+				
+				listOfDocuments = DocumentDAO.getDocuments(accountID, linkedDocuments);
+				
+				for(Document doc : listOfDocuments)
+					mapOfDocumentInfo.put(doc.getID(), doc );
+			}
+			
+			success = true;
+			
+		} catch( Exception e){
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "contactID : " ).append( contactID ).append( "<br/></br>" );	
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" contactID: "+contactID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			mapOfDocumentInfo.put("success", success);
+		}
+		return mapOfDocumentInfo;
+				
+	}
+	
+	/*public static Map<String, Object> getDocNamesForContacts(String appID, StringBuilder requestDetails, String accountID, String json) {
+		
+		Map<String, Object> mapOfDocumentInfo = new HashMap<String, Object>(), mapOfDocInfoForOneContact = null;
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		List<Contact> listOfContact  = null;
+		List<Document> listOfDocuments = null;
+		List<String> listOfDocumentID = new ArrayList<String>(), listOfContactID = null;
+		ObjectMapper mapper = new ObjectMapper();
+		try {
+			
+			listOfContactID = mapper.readValue(json, new TypeReference<List<String>>(){});
+			
+			listOfContact = ContactDAO.getContacts_v1(accountID, listOfContactID);
+			if(Utilities.isEmpty(listOfContact)){
+				success = true;
+				mapOfDocumentInfo.put("success", true);
+				return mapOfDocumentInfo;
+			}
+			
+			for(Contact contact : listOfContact) {
+				if(!Utilities.isEmpty(contact.getLinkedDocuments()))
+					listOfDocumentID.addAll(contact.getLinkedDocuments());
+			}
+			
+			if(Utilities.isEmpty(listOfDocumentID)){
+				success = true;
+				mapOfDocumentInfo.put("success", true);
+				return mapOfDocumentInfo;
+			}
+			
+			listOfDocuments = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+			
+			if(Utilities.isEmpty(listOfDocuments))
+				throw new Exception("Unable to fetch documents for given IDs");
+			
+			for(Contact contact : listOfContact) {
+				
+				if(!Utilities.isEmpty(contact.getLinkedDocuments())){
+					mapOfDocInfoForOneContact = new HashMap<String, Object>();
+					
+					for(Document document : listOfDocuments){
+						if(contact.getLinkedDocuments().contains(document.getID()))
+							mapOfDocInfoForOneContact.put(document.getID(), document.getName());
+					}
+					
+					if(!Utilities.isEmpty(mapOfDocInfoForOneContact))
+						mapOfDocumentInfo.put(contact.getID(),mapOfDocInfoForOneContact);
+				}
+			}
+				
+
+			success = true;
+			
+		} catch( Exception e){
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );	
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" json: "+json, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			mapOfDocumentInfo.put("success", success);
+		}
+		return mapOfDocumentInfo;
+				
+	}*/
+	
+	/*public static Map<String, Object> uploadDocument(String appID, StringBuilder requestDetails,String accountID, String json) {
+		
+		StringBuilder errorBuilder = null;
+		boolean success = false, isSearchIndexCreated = false, isDocumentCreated = false, isAccountUpdated = false, isParentAccountUpdated = false;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null, documentMap = null, mapOfDocumentInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		List<String> linkedAccounts = null, linkedDocuments = null, existingLinkedDocuments = null, listOfDocumentID = null, linkedTasks = null;
+		List<Long> linkedDeals = null;
+		String mimeType = "", fileName = "", fileData, userID = "", entityID = "", entityType = "", departmentID;
+		byte[] fileDataInBytes;
+		String fileID = UUID.randomUUID().toString();
+		Long fileSize = null;
+		Document persistedDocument = null;
+		Double documentsSpace = null;
+		List<SearchIndex> persistedIndex = null;
+		Account account = null, persistedAccount = null, parentAccount = null;
+		GcsService gcsService = null;
+		GcsFileOptions options = null;
+		List<Document> documents = new ArrayList<Document>();
+		
+		try {
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			
+			entityID = (String) inputMap.get("entityID");
+			entityType = (String) inputMap.get("entityType");
+			documentMap = (HashMap<String,Object>) inputMap.get("documentMap");
+			existingLinkedDocuments = (List<String>) inputMap.get("linkedDocuments");
+			
+			fileData = (String) documentMap.get("documentData");
+			mimeType = (String) documentMap.get("type");
+			fileName = (String) documentMap.get("name");
+			userID = (String) documentMap.get("ownerID");
+			departmentID = Utilities.correctToNull((String) documentMap.get("departmentID"));
+			
+			if(StringUtil.isBlank(mimeType) || StringUtil.isBlank(fileName) || StringUtil.isBlank(entityID) ||  
+					StringUtil.isBlank(mimeType) || StringUtil.isBlank(entityType))
+				throw new Exception("Certain key(s) for creating a document are missing");
+			
+		   Base64 base64 = new Base64();
+		   fileDataInBytes = base64.decode(fileData.getBytes());
+		   fileSize = new Long(fileDataInBytes.length);
+		   
+		   if(fileSize < 1 || fileSize > 5120000)
+			   throw new Exception("Document size ("+fileSize+") is larger than 5120000 bytes or less than 1 byte");
+		   if(StringUtil.isBlank(mimeType) || !permissableMimeTypes.contains(mimeType))
+			   throw new Exception("Document type is not PDF, DOC, DOCX, XLS, XLSX, RTF, ODT, XML, JPG, GIF, TIFF, PNG, PPS, PPT, PPTX, MP3 or WAV");
+		   
+		   parentAccount = DataStoreUtil.getObjectByID( Account.class , accountID );
+		   documentsSpace = parentAccount.getDocumentsSpace();
+		   if(documentsSpace == null)
+			   documentsSpace = 0D;
+		   documentsSpace = documentsSpace + (fileSize.doubleValue() / 1048576);
+		   
+		   if(documentsSpace > 512 && !accountID.equals("SEN42")) {
+			   map.put("error","Looks like you have reached the maximum limit for document storage (512 MB) for a free account in Distributed Source. Please upgrade your account for more storage and lots of other benefits.");
+			   return map;
+		   }
+		   
+		   Document document = new Document();
+		     
+		     if(entityType.equals("deal")){
+		    	 linkedDeals = new ArrayList<Long>();
+		    	 linkedDeals.add(Long.parseLong(String.valueOf(entityID)));
+		    	 document.setLinkedDeals(linkedDeals);
+		    	 
+		     } else if(entityType.equals("account")){
+		    	 
+		    	 linkedAccounts = new ArrayList<String>();
+		    	 linkedAccounts.add(entityID);
+		    	 document.setLinkedAccounts(linkedAccounts);
+		    	 
+		     } else if(entityType.equals("task")){
+		    	 
+		    	 linkedTasks = new ArrayList<String>();
+		    	 linkedTasks.add(entityID);
+		    	 document.setLinkedTasks(linkedTasks);
+		     }
+			
+		     GcsFilename gcsFilename = null;
+		     if("SEN42".equals(accountID))
+		    	 gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+departmentID+"/documents/"+fileID);
+		     else
+		    	 gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+fileID);
+		   
+		    if(entityType.equals("task") && imageTypes.contains(mimeType)) {
+		    	
+				gcsService = GcsServiceFactory.createGcsService();
+			    options = new GcsFileOptions.Builder()
+			       .mimeType(mimeType)
+			       .acl("public_read")
+			       .addUserMetadata("name",fileName)
+			       .addUserMetadata("accountID", accountID).build();
+			     
+		     } else {
+		    	
+		    	gcsService = GcsServiceFactory.createGcsService();
+			    options = new GcsFileOptions.Builder()
+			       .mimeType(mimeType)
+			       .acl("project_private")
+			       .addUserMetadata("name",fileName)
+			       .addUserMetadata("accountID", accountID).build();
+		     }
+		    
+		     GcsOutputChannel writeChannel = gcsService.createOrReplace(gcsFilename, options);
+		     writeChannel.waitForOutstandingWrites();
+		     
+		     writeChannel.write(ByteBuffer.wrap
+		               (base64.decode(fileData.getBytes())));
+		     writeChannel.close();
+		     
+		     document.setBucketName(dsGCSBucketName);
+		     document.setDeleted(false);
+		     document.setID(fileID);
+		     document.setName(fileName);
+		     document.setType(mimeType);
+		     document.setSize(fileSize);
+		     document.setOwnerID(userID);
+		     document.setAccountID(accountID);
+		     document.setDepartmentID(departmentID);
+
+		     persistedDocument = DocumentDAO.createDocument(document);
+		     if(persistedDocument != null)
+		    	 isDocumentCreated = true;
+		     
+		     documents.add(document);
+		     persistedIndex = SearchService.updateSearchIndexForDocument(documents);
+		     if(persistedIndex != null)
+		    	 isSearchIndexCreated = true;
+		     
+		     if(isDocumentCreated) {
+		    	 parentAccount.setDocumentsSpace(documentsSpace);
+		    	 AccountDAO.updateAccount(parentAccount);
+		    	 isParentAccountUpdated = true;
+		     }
+		     
+		     if(entityType.equals("account")){
+
+		    	 account = AccountDAO.getAccount(accountID, false, entityID);
+		    	 linkedDocuments = account.getLinkedDocuments();
+		    	 if(linkedDocuments == null)
+		    		 linkedDocuments = new ArrayList<String>();
+		    	 linkedDocuments.add(document.getID());
+		    	 account.setLinkedDocuments(linkedDocuments);
+		    	 persistedAccount = AccountDAO.updateAccount(account);
+		    	 
+		    	 if(persistedAccount != null)
+		    		 isAccountUpdated = true;
+		    	 
+		    	 listOfDocumentID = linkedDocuments;
+		    	 
+		    	 map.put("account", account);
+		    	 
+		     } else if(entityType.equals("deal") || entityType.equals("task")){
+		    	 
+		    	 listOfDocumentID = existingLinkedDocuments;
+		    	 listOfDocumentID.add(document.getID());
+		     }
+		     
+		     mapOfDocumentInfo = getDocumentsBasedOnIDs(appID, requestDetails, accountID, mapper.writeValueAsString(listOfDocumentID));
+		     if((Boolean) mapOfDocumentInfo.get("success")){
+		    	 mapOfDocumentInfo.remove("success");
+		    	 map.put("mapOfLinkedDocumentInfo", mapOfDocumentInfo);
+		     }
+
+		     map.put("documentID", document.getID());
+		     
+		     SearchService.updateAttachmentDocumentsInIndex(appID, requestDetails, accountID, documents);
+		     
+			 success = true;
+			
+		} catch(Exception e) {
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isParentAccountUpdated : " ).append( isParentAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isAccountUpdated : " ).append( isAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentCreated : " ).append( isDocumentCreated ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n json: "+json 
+							+" isSearchIndexCreated: "+isSearchIndexCreated+ " isDocumentCreated: "+isDocumentCreated
+							+" isAccountUpdated: "+isAccountUpdated+"\n isParentAccountUpdated: "+isParentAccountUpdated, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		} 
+		return map;
+	}*/
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> getDocumentsBasedOnIDs(String appID, StringBuilder requestDetails, String accountID, String listOfDocumentIDJSON) {
+		
+		Map<String, Object> mapOfDocumentInfo = new HashMap<String, Object>();
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		List<Document> listOfDocuments = null;
+		List<String> listOfDocumentID = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			listOfDocumentID = mapper.readValue(listOfDocumentIDJSON, new TypeReference<List<String>>(){});
+			//Map<String,Object> mapOfJsonInfo = mapper.readValue(listOfDocumentIDJSON, new TypeReference<Map<String,Object>>(){});
+			//listOfDocumentID = (List<String>) mapOfJsonInfo.get("documentID");
+			//String departmentID = (String) mapOfJsonInfo.get("departmentID");
+			
+			if(!Utilities.isEmpty(listOfDocumentID)) {
+				//departmentID = Utilities.isBlankCorrectToNull(departmentID);
+				listOfDocuments = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+				//listOfDocuments = DocumentDAO.getDocuments_v2(accountID, departmentID, listOfDocumentID);
+				
+				for(Document doc : listOfDocuments)
+					mapOfDocumentInfo.put(doc.getID(), doc);
+			}
+			
+			success = true;
+			
+		} catch( Exception e){
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );	
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" listOfDocumentID: "+listOfDocumentID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			mapOfDocumentInfo.put("success", success);
+		}
+		return mapOfDocumentInfo;
+				
+	}
+	
+	public static Map<String, Object> dissociateDocumentFromEntity(String appID,StringBuilder requestDetails,String accountID,String documentID,String json){
+		
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null, mapOfLinkedDocumentInfo = null;
+		boolean success = false, isAccountUpdated = false, isDocumentUpdated = false;
+		Account parentAccount = null;
+		Document document = null, updatedDocument = null;
+		ObjectMapper mapper = new ObjectMapper();
+		String entityType = "", entityID = "";
+		List<String> linkedDocuments = null, linkedAccounts = null, existingLinkedDocuments = null, linkedTasks = null,
+						linkedContacts, linkedDocumentsOfEntity=null;
+		List<Long> linkedDeals = null;
+		StringBuilder errorBuilder = null;
+		GcsService gcsService = null;
+		GcsFilename gcsFilename = null;
+		Double documentsSpace = null;
+		Entity contact, account;
+		
+		try{
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			
+			entityType = (String) inputMap.get("entityType");
+			entityID = (String) inputMap.get("entityID");
+			existingLinkedDocuments = (List<String>) inputMap.get("linkedDocuments");
+			//linkedContactsOfEntity = (List<String>) inputMap.get("linkedContacts");
+			
+			document = DocumentDAO.getDocumentByID(accountID, documentID);
+			
+			if(entityType.equals("account")) {
+				
+				linkedAccounts = document.getLinkedAccounts();
+				linkedAccounts.remove(entityID);
+				document.setLinkedAccounts(linkedAccounts);
+
+				account = DataStoreUtil.getEntityUsingKey(  KeyFactory.createKey("Account", entityID));
+				
+				linkedDocuments = (List<String>) account.getProperty("linkedDocuments");
+				linkedDocuments.remove(documentID);
+				account.setProperty("linkedDocuments",linkedDocuments);
+				AccountDAO.putAccount(account);
+
+				//map.put("account", updatedAccount);
+				linkedDocumentsOfEntity = linkedDocuments;
+				
+			} else if(entityType.equals("deal")) {
+				
+				linkedDeals = document.getLinkedDeals();
+				linkedDeals.remove(Long.parseLong(String.valueOf(entityID)));
+				document.setLinkedDeals(linkedDeals);
+				
+			} else if(entityType.equals("task")) {
+				
+				linkedTasks = document.getLinkedTasks();
+				linkedTasks.remove(entityID);
+				document.setLinkedTasks(linkedTasks);
+				
+			} else if(entityType.equals("contact") || entityType.equals("lead")) {
+				
+				linkedContacts = document.getLinkedContacts();
+				linkedContacts.remove(entityID);
+				document.setLinkedContacts(linkedContacts);
+				
+				 contact = DataStoreUtil.getEntityUsingKey( KeyFactory.createKey("Contact", entityID) );
+		    	 linkedDocuments = (List<String>) contact.getProperty("linkedDocuments");
+		    	 linkedDocuments.remove(documentID);
+		    	 contact.setProperty("linkedDocuments",linkedDocuments);
+		    	 ContactDAO.putContactEntity_v1(contact);
+		    	 
+		    	 linkedDocumentsOfEntity = linkedDocuments; 
+			}
+						
+			if(Utilities.isEmpty(document.getLinkedAccounts()) && Utilities.isEmpty(document.getLinkedContacts()) && Utilities.isEmpty(document.getLinkedDeals())
+					&& Utilities.isEmpty(document.getLinkedTasks())) {
+				
+				document.setDeleted(true);
+
+				SearchService.deleteContactIndex_v1(accountID, documentID);
+				SearchService.deleteADocumentFromIndex(accountID, documentID);
+				
+				parentAccount = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + accountID+ "' && deleted == false");
+				documentsSpace = parentAccount.getDocumentsSpace();
+				documentsSpace = documentsSpace - (document.getSize().doubleValue() / 1048576);
+				parentAccount.setDocumentsSpace(documentsSpace);
+				AccountDAO.updateAccount(parentAccount);
+				
+				gcsService = GcsServiceFactory.createGcsService();
+				
+				if("SEN42".equals(accountID))
+					gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+document.getDepartmentID()+"/documents/"+documentID);
+				else
+					gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+documentID);
+				
+				gcsService.delete(gcsFilename);
+			}
+			
+			updatedDocument = DataStoreUtil.write(document);
+			if(updatedDocument != null)
+				isDocumentUpdated = true;
+			
+			if(linkedDocumentsOfEntity != null)
+				map.put("linkedDocumentsOfEntity", linkedDocumentsOfEntity);
+			
+			existingLinkedDocuments.remove(documentID);
+			mapOfLinkedDocumentInfo = getDocumentsBasedOnIDs(appID, requestDetails, accountID, mapper.writeValueAsString(existingLinkedDocuments));
+			if((Boolean) mapOfLinkedDocumentInfo.get("success")){
+				mapOfLinkedDocumentInfo.remove("success");
+				map.put("mapOfLinkedDocumentInfo", mapOfLinkedDocumentInfo);
+			}
+			
+			/*mapOfContactDocumentInfo = getDocNamesForContacts(appID,requestDetails, accountID, mapper.writeValueAsString(linkedContactsOfEntity));
+			if((Boolean) mapOfContactDocumentInfo.get("success")){
+				mapOfContactDocumentInfo.remove("success");
+				map.put("mapOfContactDocumentInfo", mapOfContactDocumentInfo);
+			}*/
+			
+			success = true;			
+			
+		} catch(Exception e){
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "documentID : " ).append( documentID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isAccountUpdated : " ).append( isAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentUpdated : " ).append( isDocumentUpdated ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" documentID: "+documentID+" json: "+json
+															+" isDocumentUpdated: "+isDocumentUpdated, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> associateDocumentsToTask(String appID,StringBuilder requestDetails,String accountID,String json){
+		
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null;
+		boolean success = false;
+		ObjectMapper mapper = new ObjectMapper();
+		String taskID = "";
+		List<String> linkedTasks = null, listOfDocumentIds = null;
+		StringBuilder errorBuilder = null;
+		List<Document> documents = null;
+		Date todaysDate = new Date();
+		
+		try{
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+
+			taskID = (String) inputMap.get("taskID");
+			listOfDocumentIds = (List<String>) inputMap.get("documentIDs");
+			
+			documents = DocumentDAO.getDocuments(accountID, listOfDocumentIds);
+			
+			for(Document document : documents) {
+				
+				linkedTasks = Utilities.createNewIfNull( document.getLinkedTasks() );
+
+				if(!linkedTasks.contains(taskID))
+					linkedTasks.add(taskID);
+				
+				document.setLinkedTasks(linkedTasks);
+			}
+			
+			DataStoreUtil.batchWrite(documents);
+			
+			success = true;			
+			
+		} catch(Exception e){
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "taskID : " ).append( taskID ).append( "<br/></br>" );	
+			errorBuilder.append( "documentIDs : " ).append( listOfDocumentIds ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" documentID: "+listOfDocumentIds+" json: "+json, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+	}
+	
+	public static List<Document> updateDocumentsForNewAccount(String appID, StringBuilder requestDetails, String accountID, String accountsID, List<String> listOfDocumentID){
+		
+		List<Document> documents = null, updatedDocuments = null;
+		StringBuilder errorBuilder = null;
+		boolean isDocumentUpdated = false;
+		List<String> linkedAccounts = null;
+		
+		try {
+			
+			if(Utilities.isEmpty(listOfDocumentID))
+				return updatedDocuments;
+			
+			documents = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+			for(Document document : documents) {
+				
+				linkedAccounts = document.getLinkedAccounts();
+				if(linkedAccounts == null)
+					linkedAccounts = new ArrayList<String>();
+				linkedAccounts.add(accountsID);
+				document.setLinkedAccounts(linkedAccounts);
+			}
+			
+			updatedDocuments = (List <Document>) DataStoreUtil.batchWrite(documents);
+			
+		} catch (Exception e){
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "accountsID : " ).append( accountsID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );	
+			errorBuilder.append( "isDocumentUpdated : " ).append( isDocumentUpdated ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" listOfDocumentID: "+listOfDocumentID
+															+" isDocumentUpdated: "+isDocumentUpdated+ " accountsID: "+accountsID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+		} 
+		
+		return updatedDocuments;
+	}
+	
+	public static Map<String, Object> uploadProfilePicture(String appID, StringBuilder requestDetails, String apikey, String json) {
+		
+		StringBuilder errorBuilder = null;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null;
+		boolean success = false;
+		ObjectMapper mapper = new ObjectMapper();
+		String imageData = null, mimeType = null, fileName = null, userID = null, photoID = null, accountID;
+		byte[] fileDataInBytes = null;
+		Long fileSize = 0L;
+		Contact contact = null;
+		
+		try {
+			
+			try {
+				inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			}
+			catch(Exception e){
+				map.put("error", "Invalid JSON.");
+				return map;
+			}
+			
+			imageData = (String) inputMap.get("imageData");
+			mimeType = (String) inputMap.get("type");
+			fileName = (String) inputMap.get("name");
+			userID = (String) inputMap.get("ownerID");
+			accountID = (String) inputMap.get("accountID");
+			//extension = (String) inputMap.get("extension");
+			
+			try {
+				contact = DataStoreUtil.getObjectByID( Contact.class , userID );
+				if(!contact.getAccountID().equals( apikey ) || !contact.getLinkedAccounts().contains(accountID))
+					throw new Exception();
+			}
+			catch(Exception e){
+				map.put("error", "Contact not found.");
+				return map;
+			}
+			
+			if(StringUtil.isBlank(mimeType) || StringUtil.isBlank(fileName) || StringUtil.isBlank(userID) || StringUtil.isBlank(imageData)){
+				map.put("error", "Certain key(s) for creating a document are missing");
+				return map;
+			}
+			
+		   Base64 base64 = new Base64();
+		   fileDataInBytes = base64.decode(imageData.getBytes());
+		   fileSize = new Long(fileDataInBytes.length);
+		   
+		   if(fileSize < 1 || fileSize > 512000){
+			   map.put("error", "Document size is larger than 512000 bytes or less than 1 byte");
+			   return map;
+		   }
+		   if(StringUtil.isBlank(mimeType) || !(mimeType.equals("image/jpeg") || mimeType.equals("image/png") )){
+			   map.put("error", "Document type is not JPEG or PNG");
+			   return map;
+		   }
+		   
+		   GcsFilename gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+userID+"/"+"profile_picture");
+			
+		   GcsService gcsService = GcsServiceFactory.createGcsService();
+		    GcsFileOptions options = new GcsFileOptions.Builder()
+		       .mimeType(mimeType)
+		       .acl("public_read")
+		       .addUserMetadata("name",fileName)
+		       .addUserMetadata("accountID", accountID).build();
+		    
+		    GcsOutputChannel writeChannel = gcsService.createOrReplace(gcsFilename, options);
+		     writeChannel.waitForOutstandingWrites();
+		     
+		     writeChannel.write(ByteBuffer.wrap
+		               (base64.decode(imageData.getBytes())));
+		     writeChannel.close();
+		     
+		     photoID = "http://storage.googleapis.com/"+dsGCSBucketName+"/"+accountID+"/"+userID+"/profile_picture";
+		     
+		     contact.setPhotoID(photoID);
+		     ContactDAO.updateContact_v1(contact);
+			
+		     map.put("photoID", photoID);
+			
+		     /* Below fragment of code updates the latest users under an account in cache - only for DS - changes start */
+				//AccountService.updateDSUsersInfoInCache(accountID);
+			/* Fragment of code updates the latest users under an account in cache - only for DS - changes end */
+				
+			success = true;
+			
+		} catch (Exception e){
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  apikey :" + apikey+" json: "+json, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String, Object> addIDToLinkedDealsOfDocuments(String appID, StringBuilder requestDetails, String accountID, List<String> documentIDList, Long dealID ) {
+		
+		Map<String, Object> map = new HashMap<String, Object>();
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		Map<Key, Entity> mapOfDocuments = null;
+		List<Entity> listOfDocument = new ArrayList<Entity>();
+		Entity document = null;
+		List<Long> linkedDeals = null; 
+		
+		try {
+			
+			mapOfDocuments = DocumentDAO.getDocumentEntities(documentIDList);
+			
+			for(Key key : mapOfDocuments.keySet()) {
+				
+				document = mapOfDocuments.get(key);
+				linkedDeals = (List<Long>) document.getProperty("linkedDeals");
+				
+				if(linkedDeals == null)
+					linkedDeals = new ArrayList<Long>();
+				
+				if(!linkedDeals.contains(dealID))
+					linkedDeals.add(dealID);
+				
+				document.setProperty("linkedDeals", linkedDeals);
+				listOfDocument.add(document);
+			}
+			
+			DataStoreUtil.put(listOfDocument);
+			success = true;
+			
+		} catch (Exception e) {
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "dealID : " ).append( dealID ).append( "<br/></br>" );
+			errorBuilder.append( "documentIDList : " ).append( documentIDList ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" dealID: "+dealID+ "documentIDList: "+documentIDList, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+	}
+	
+	public static Map<String, Object> dissociateTasksFromDocuments(String appID, StringBuilder requestDetails, String accountID, List<String> listOfDocumentID, List<String> listOfTaskID) {
+		
+		Map<String,Object> map = new HashMap<String, Object>();
+		boolean success = false;
+		Map<Key, Entity> mapOfdocuments = null;
+		List<String> linkedTasks = null, linkedAccounts = null, linkedContacts = null, listOfDocumentToDelete = new ArrayList<String>();
+		List<Long> linkedDeals = null;
+		List<Entity> documents = new ArrayList<Entity>();
+		Entity entity = null;
+		GcsFilename gcsFilename =null;
+		GcsService gcsService = null;
+		Double spaceToBeDeducted = 0D, documentsSpace = 0D;
+		Long size = 0L;
+		Account parentAccount = null;
+		StringBuilder errorBuilder = null;
+		
+		try {
+			
+			gcsService = GcsServiceFactory.createGcsService();
+			mapOfdocuments = DocumentDAO.getDocumentEntities(listOfDocumentID);
+			
+			for(Key key : mapOfdocuments.keySet()) {
+				
+				entity = mapOfdocuments.get(key);
+				linkedTasks = (List<String>) entity.getProperty("linkedTasks");
+				linkedAccounts = (List<String>) entity.getProperty("linkedAccounts");
+				linkedContacts = (List<String>) entity.getProperty("linkedContacts");
+				linkedDeals = (List<Long>)entity.getProperty("linkedDeals");
+				
+				linkedTasks.removeAll(listOfTaskID);
+				entity.setProperty("linkedTasks", linkedTasks);
+				
+				if(Utilities.isEmpty(linkedTasks) && Utilities.isEmpty(linkedAccounts) && Utilities.isEmpty(linkedDeals) && Utilities.isEmpty(linkedContacts)) {
+					
+					entity.setProperty("deleted",true);
+					
+					size = (Long) entity.getProperty("size");
+					
+					listOfDocumentToDelete.add(entity.getKey().getName());
+					
+					if("SEN42".equals(accountID))
+						gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+(String)entity.getProperty("departmentID")+"/documents/"+entity.getKey().getName());
+					else
+						gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+entity.getKey().getName());
+					
+					gcsService.delete(gcsFilename);
+					spaceToBeDeducted = spaceToBeDeducted + (size.doubleValue() / 1048576 );
+				}
+				
+				documents.add(entity);
+			}
+			
+			if(!Utilities.isEmpty(listOfDocumentToDelete)) {
+				
+				SearchService.deleteContactIndex_v1(appID, requestDetails, accountID, listOfDocumentToDelete);
+				SearchService.deleteDocumentsFromIndex(appID, requestDetails, accountID, listOfDocumentToDelete);
+				
+				parentAccount = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + accountID+ "' && deleted == false");
+				documentsSpace = parentAccount.getDocumentsSpace();
+				documentsSpace = documentsSpace - spaceToBeDeducted;
+				parentAccount.setDocumentsSpace(documentsSpace);
+				AccountDAO.updateAccount(parentAccount);
+			}
+			
+			DataStoreUtil.put(documents);
+			success = true;
+			
+		} catch (Exception e) {
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfTaskID : " ).append( listOfTaskID ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" listOfDocumentID: "+listOfDocumentID+ "listOfTaskID: "+listOfTaskID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+		
+	}
+	
+	public static Map<String, Object> uploadDocuments(String appID, StringBuilder requestDetails,String accountID, String json) {
+		
+		StringBuilder errorBuilder = null;
+		boolean success = false, isSearchIndexCreated = false, isDocumentCreated = false, isAccountUpdated = false, isParentAccountUpdated = false,
+				isDocumentsCreated = false;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null;
+		ObjectMapper mapper = new ObjectMapper();
+		List<String> linkedDocuments = null, linkedTasks = null;
+		String mimeType = "", fileName = "", fileData, userID = "", entityID = "", entityType = "", departmentID;
+		byte[] fileDataInBytes;
+		String fileID = null;
+		Long fileSize = null;
+		Document persistedDocument = null;
+		Double documentsSpace = null;
+		List<SearchIndex> persistedIndex = null;
+		Account parentAccount = null;
+		List<Map> documents = null;
+		GcsService gcsService = null;
+		GcsFileOptions options = null;
+		Document document = null;
+		List<Document> documentList = new ArrayList<Document>(), persistedDocuments = null;
+		GcsFilename gcsFilename = null;
+		GcsOutputChannel writeChannel = null;
+		
+		try {
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			
+			entityID = (String) inputMap.get("entityID");
+			entityType = (String) inputMap.get("entityType");
+			documents = (List<Map>) inputMap.get("documents");
+			departmentID = Utilities.correctToNull((String) inputMap.get("departmentID"));
+			userID = (String) inputMap.get("ownerID");
+			//String departmentID = null;
+			
+			linkedDocuments = new ArrayList<String>();
+			Base64 base64 = new Base64();
+			//documentMap = (HashMap<String,Object>) inputMap.get("documentMap");
+			//existingLinkedDocuments = (List<String>) inputMap.get("linkedDocuments");
+			
+			parentAccount = DataStoreUtil.getObjectByID( Account.class , accountID );
+			documentsSpace = parentAccount.getDocumentsSpace();
+			if(documentsSpace == null)
+				documentsSpace = 0D;
+			
+			for(Map documentMap : documents) {
+				
+				//departmentID = null;
+				
+				fileData = (String) documentMap.get("documentData");
+				mimeType = (String) documentMap.get("type");
+				fileName = (String) documentMap.get("name");
+				//departmentID = (String) documentMap.get("departmentID");
+				
+				if(StringUtil.isBlank(mimeType) || StringUtil.isBlank(fileName) || StringUtil.isBlank(entityID) ||  
+						StringUtil.isBlank(mimeType) || StringUtil.isBlank(entityType))
+					throw new Exception("Certain key(s) for creating a document are missing");
+				
+			   fileDataInBytes = base64.decode(fileData.getBytes());
+			   fileSize = new Long(fileDataInBytes.length);
+			   
+			   if(fileSize < 1 || fileSize > 5120000)
+				   throw new Exception("Document size ("+fileSize+") is larger than 5120000 bytes or less than 1 byte");
+			   if(StringUtil.isBlank(mimeType) || !permissibleMimeTypes.contains(mimeType))
+				   throw new Exception("Document type is not DOC, DOCX, PDF, RSS, KML, KMZ, XLS, XLSX, RTF, PPS, PPT, PPTX, ODP, ODS, ODT, XML, "
+				   									+ "SXC, SXW, GZIP, ZIP, AU, SND, FLAC, MID, RMI, M4A, MP3, OGA, OGG, AIF, AIFC, AIFF, WAV, GIF, "
+				   									+ "JPEG, JPG, JPE, PNG, TIFF, TIF, WBMP, BMP, ICS, CSV, CSS, HTM, HTML, TEXT, TXT, ASC, DIFF, "
+				   									+ "VCF, MP4, MPEG, MPG, MPE, OGV, QT, MOV or AVI");
+			   
+			   documentsSpace = documentsSpace + (fileSize.doubleValue() / 1048576 );
+			   
+			   if(documentsSpace > 512 && !accountID.equals("SEN42")) {
+				   map.put("error","Looks like you have reached the maximum limit for document storage (512 MB) for a free account in Distributed Source. Please upgrade your account for more storage and lots of other benefits.");
+				   return map;
+			   }
+			   
+			   document = new Document();
+			   
+			   	if(entityType.equals("task")){
+			    	 
+			    	 linkedTasks = new ArrayList<String>();
+			    	 linkedTasks.add(entityID);
+			    	 document.setLinkedTasks(linkedTasks);
+			     }
+			   	else
+			   		return map;
+				
+			   fileID = UUID.randomUUID().toString();
+			   
+			   if("SEN42".equals(accountID))
+				   gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+departmentID+"/documents/"+fileID);
+			   else
+				   gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+fileID);
+			   
+			    if(entityType.equals("task") && imageTypes.contains(mimeType)) {
+			    	
+					gcsService = GcsServiceFactory.createGcsService();
+				    options = new GcsFileOptions.Builder()
+				       .mimeType(mimeType)
+				       .acl("public_read")
+				       .addUserMetadata("name",fileName)
+				       .addUserMetadata("accountID", accountID).build();
+				     
+			     } else {
+			    	
+			    	gcsService = GcsServiceFactory.createGcsService();
+				    options = new GcsFileOptions.Builder()
+				       .mimeType(mimeType)
+				       .acl("project_private")
+				       .addUserMetadata("name",fileName)
+				       .addUserMetadata("accountID", accountID).build();
+			     }
+			    
+			     writeChannel  = gcsService.createOrReplace(gcsFilename, options);
+			     writeChannel.waitForOutstandingWrites();
+			     
+			     writeChannel.write(ByteBuffer.wrap
+			               (base64.decode(fileData.getBytes())));
+			     writeChannel.close();
+			     
+			     document.setBucketName(dsGCSBucketName);
+			     document.setDeleted(false);
+			     document.setID(fileID);
+			     document.setName(fileName);
+			     document.setType(mimeType);
+			     document.setSize(fileSize);
+			     document.setOwnerID(userID);
+			     document.setAccountID(accountID);
+			     document.setDepartmentID(departmentID);
+			     
+			     documentList.add(document);
+			     linkedDocuments.add(document.getID());
+			}
+			
+			persistedDocuments = (List <Document>) DataStoreUtil.batchWrite(documentList);
+			if(persistedDocument != null)
+		    	 isDocumentsCreated = true;
+			
+			persistedIndex = SearchService.updateSearchIndexForDocument(documentList);
+			if(persistedIndex != null)
+		    	 isSearchIndexCreated = true;
+			
+			if(isDocumentsCreated) {
+		    	 parentAccount.setDocumentsSpace(documentsSpace);
+		    	 AccountDAO.updateAccount(parentAccount);
+		    	 isParentAccountUpdated = true;
+		     }
+			
+			 SearchService.updateAttachmentDocumentsInIndex(appID, requestDetails, accountID, documentList);
+			
+			 success = true;
+			
+		} catch(Exception e) {
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isParentAccountUpdated : " ).append( isParentAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isAccountUpdated : " ).append( isAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentCreated : " ).append( isDocumentCreated ).append( "<br/></br>" );
+			/*errorBuilder.append( "isSearchIndexCreated : " ).append( isSearchIndexCreated ).append( "<br/></br>" );*/
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n json: "+json 
+							+" isSearchIndexCreated: "+isSearchIndexCreated+ " isDocumentCreated: "+isDocumentCreated
+							+" isAccountUpdated: "+isAccountUpdated+"\n isParentAccountUpdated: "+isParentAccountUpdated, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+			map.put("documents", persistedDocuments);
+			map.put("linkedDocuments",linkedDocuments);
+		} 
+		return map;
+	}
+	
+	public static Map<String, Object> getDocumentsForContacts(String appID, StringBuilder requestDetails, String accountID, String json) {
+		
+		String documentID;//, documentName;
+		Map<String, Object> mapOfDocumentInfo = new HashMap<String, Object>(), mapOfDocInfoForOneContact = new HashMap<String, Object>(), inputMap, map = new HashMap<String, Object>();
+		boolean success = false;
+		StringBuilder errorBuilder = null;
+		List<String> listOfContactID = null, linkedContacts;
+		ObjectMapper mapper = new ObjectMapper();
+		QueryResultIterator<Entity> iterator = null;
+		Entity entity = null;
+		
+		try {
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			
+			listOfContactID = (List<String>) inputMap.get("listOfContactID");
+			
+			if(inputMap.containsKey("linkedEntity"))
+				map.put("linkedEntity", inputMap.get("linkedEntity"));
+			
+			if(Utilities.isEmpty(listOfContactID)){
+				success = true;
+				return map;
+			}
+			
+			iterator = DocumentDAO.getDocumentsLinkedToContacts(accountID, false,listOfContactID);
+			
+			if(!iterator.hasNext()){
+				success = true;
+				return map;
+			}
+			
+			while ( iterator.hasNext() ) {
+				
+				entity = iterator.next();								
+				
+				documentID = entity.getKey().getName();
+				//documentName = (String) entity.getProperty("name");
+				linkedContacts = (List<String>) entity.getProperty("linkedContacts");
+				
+				for(String contactID : linkedContacts) {
+					
+					if(mapOfDocumentInfo.containsKey(contactID))
+						mapOfDocInfoForOneContact = (Map<String, Object>)mapOfDocumentInfo.get(contactID);
+					else
+						mapOfDocInfoForOneContact = new HashMap<String, Object>();
+
+					mapOfDocInfoForOneContact.put(documentID, DocumentDAO.constructDocument(entity));
+					mapOfDocumentInfo.put(contactID, mapOfDocInfoForOneContact);
+				}
+			}
+			
+			map.put("mapOfContactDocumentInfo", mapOfDocumentInfo);
+
+			success = true;
+			
+		} catch( Exception e){
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );	
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" json: "+json, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		return map;				
+	}
+	
+	public static List<Document> updateDocumentsForNewAccount_v2(String appID, StringBuilder requestDetails, String accountID, String accountsID, List<String> listOfDocumentID){
+		
+		List<Document> documents = null, updatedDocuments = null;
+		StringBuilder errorBuilder = null;
+		boolean isDocumentUpdated = false;
+		List<String> linkedAccounts = null;
+		
+		try {
+			
+			if(Utilities.isEmpty(listOfDocumentID))
+				return updatedDocuments;
+			
+			documents = DocumentDAO.getDocuments(accountID, listOfDocumentID);
+			
+			for(Document document : documents) {
+
+				linkedAccounts = Utilities.createNewIfNull( document.getLinkedAccounts() );
+				
+				if(!linkedAccounts.contains(accountsID))
+					linkedAccounts.add(accountsID);
+				
+				document.setLinkedAccounts(linkedAccounts);
+			}
+			
+			updatedDocuments = (List <Document>) DataStoreUtil.batchWrite(documents);
+			
+		} catch (Exception e){
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );
+			errorBuilder.append( "accountsID : " ).append( accountsID ).append( "<br/></br>" );
+			errorBuilder.append( "listOfDocumentID : " ).append( listOfDocumentID ).append( "<br/></br>" );	
+			errorBuilder.append( "isDocumentUpdated : " ).append( isDocumentUpdated ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" listOfDocumentID: "+listOfDocumentID
+															+" isDocumentUpdated: "+isDocumentUpdated+ " accountsID: "+accountsID, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+		} 
+		
+		return updatedDocuments;
+	}
+	
+	public static Map<String, Object> uploadDocumentsForEntity(String appID, StringBuilder requestDetails,String accountID, String json) {
+		
+		StringBuilder errorBuilder = null;
+		boolean success = false, isSearchIndexCreated = false, isDocumentCreated = false, isEntityUpdated = false, isParentAccountUpdated = false;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null, mapOfDocumentInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		List<String> linkedDocuments = null, existingLinkedDocuments = null, listOfDocumentID = null, documentIDs = null;
+		String userID = "", entityID = "", entityType = "", departmentID;
+		Long totalSize = null;
+		Double documentsSpace = null;
+		List<SearchIndex> persistedIndex = null;
+		Account account = null, parentAccount = null;
+		GcsService gcsService = null;
+		List<Document> documents = new ArrayList<Document>();
+		JsonNode rootNode, documentsNode;
+		
+		try {
+			
+			inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			
+			entityID = (String) inputMap.get("entityID");
+			entityType = (String) inputMap.get("entityType");
+			departmentID = Utilities.correctToNull((String) inputMap.get("departmentID"));
+			//documents = (List<Document>) inputMap.get("documents");
+			existingLinkedDocuments = (List<String>) inputMap.get("linkedDocuments");
+			documentIDs= (List<String>) inputMap.get("documentIDs");
+			userID = (String) inputMap.get("ownerID");
+			totalSize = Long.valueOf(String.valueOf(inputMap.get("totalSize")));
+			
+			rootNode = mapper.readValue(json , JsonNode.class);
+			documentsNode = rootNode.path("documents");
+			documents = mapper.readValue(documentsNode , new TypeReference<List<Document>>(){});
+			
+			/*if(StringUtil.isBlank(entityType) || StringUtil.isBlank(entityID))
+				throw new Exception("Certain key(s) for creating a document are missing");*/
+			
+			parentAccount = DataStoreUtil.getObjectByID( Account.class , accountID );
+			documentsSpace = parentAccount.getDocumentsSpace();
+			   if(documentsSpace == null)
+				   documentsSpace = 0D;
+			   
+		   documentsSpace = documentsSpace + (totalSize.doubleValue() / 1048576);
+		   
+		   if(documentsSpace > 512 && !accountID.equals("SEN42")) {
+			   
+			   map.put("error","Looks like you have reached the maximum limit for document storage (512 MB) for a free account in Distributed Source. Please upgrade your account for more storage and lots of other benefits.");
+			   map.put("errorType","Storage Limit Exceeded");
+			   
+			   for(String documentID : documentIDs) {
+
+				   GcsFilename gcsFilename = null;
+				   gcsService = GcsServiceFactory.createGcsService();
+					
+				   	/*if("SEN42".equals(accountID))
+						gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+departmentID+"/documents/"+documentID);
+					else*/
+						gcsFilename = new GcsFilename(dsGCSBucketName, accountID+"/"+"documents"+"/"+documentID);
+					
+					gcsService.delete(gcsFilename);
+			   }
+			   
+			   return map;
+		   }
+			   
+			if(!Utilities.isEmpty(documents)){
+				
+			     if(DataStoreUtil.batchWrite(documents) != null)
+			    	 isDocumentCreated = true;
+				
+				if(entityType.equals("account")){
+					
+			    	 account = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + entityID
+								+ "' && deleted == false && parentAccountID == '" + accountID + "'"  );
+			    	 linkedDocuments = account.getLinkedDocuments();
+			    	 if(linkedDocuments == null)
+			    		 linkedDocuments = new ArrayList<String>();
+			    	 linkedDocuments.addAll(documentIDs);
+			    	 account.setLinkedDocuments(linkedDocuments);
+			    	 AccountDAO.updateAccount(account);
+			    	 
+			    	 listOfDocumentID = linkedDocuments;
+			    	 
+			    	 //map.put("account", account);
+			    	 
+			     } else if(entityType.equals("deal") || entityType.equals("task")){
+			    	 
+			    	 listOfDocumentID = existingLinkedDocuments;
+			    	 listOfDocumentID.addAll(documentIDs);
+			    	 
+			     } else if(entityType.equals("contact") || entityType.equals("lead")) {
+			    	 
+			    	 Entity contact = DataStoreUtil.getEntityUsingKey( KeyFactory.createKey("Contact", entityID) );
+			    	 linkedDocuments = (List<String>) contact.getProperty("linkedDocuments");
+			    	 if(linkedDocuments == null)
+			    		 linkedDocuments = new ArrayList<String>();
+			    	 linkedDocuments.addAll(documentIDs);
+			    	 contact.setProperty("linkedDocuments",linkedDocuments);
+			    	 if(ContactDAO.putContactEntity_v1(contact) != null)
+			    		 isEntityUpdated = true;
+			    	 
+			    	 listOfDocumentID = linkedDocuments;
+			     }
+				
+			     mapOfDocumentInfo = getDocumentsBasedOnIDs(appID, requestDetails, accountID, mapper.writeValueAsString(listOfDocumentID));
+			     if((Boolean) mapOfDocumentInfo.get("success")){
+			    	 mapOfDocumentInfo.remove("success");
+			    	 map.put("mapOfLinkedDocumentInfo", mapOfDocumentInfo);
+			     }
+	
+			     map.put("documentIDs", documentIDs);
+			     map.put("linkedDocumentsOfEntity", listOfDocumentID);
+			     map.put("entityID", entityID);
+			     map.put("entityType", entityType);
+			     
+		    	 parentAccount.setDocumentsSpace(documentsSpace);
+		    	 if(AccountDAO.updateAccount(parentAccount) != null)
+		    		 isParentAccountUpdated = true;
+				
+			     persistedIndex = SearchService.updateSearchIndexForDocument(documents);
+			     if(persistedIndex != null)
+			    	 isSearchIndexCreated = true;
+			     
+			     SearchService.updateAttachmentDocumentsInIndex(appID, requestDetails, accountID, documents);
+			}
+			
+			 success = true;
+			
+		} catch(Exception e) {
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isParentAccountUpdated : " ).append( isParentAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isEntityUpdated : " ).append( isEntityUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentCreated : " ).append( isDocumentCreated ).append( "<br/></br>" );
+			/*errorBuilder.append( "isSearchIndexCreated : " ).append( isSearchIndexCreated ).append( "<br/></br>" );*/
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  accountID :" + accountID+" \n json: "+json 
+							+" isSearchIndexCreated: "+isSearchIndexCreated+ " isDocumentCreated: "+isDocumentCreated
+							+" isEntityUpdated: "+isEntityUpdated+"\n isParentAccountUpdated: "+isParentAccountUpdated, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		} 
+		return map;
+	}
+	
+	
+	public static Map<String, Object> deletePartiallyCreatedDocuments(String appID, StringBuilder requestDetails,String accountID, String json) {
+		
+		StringBuilder errorBuilder = null;
+		boolean success = false, isDocumentsUpdated = false, isEntityUpdated = false, isParentAccountUpdated = false;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null;
+		ObjectMapper mapper = new ObjectMapper();
+		List<String> linkedDocuments = null, documentIDs = new ArrayList<String>();
+		String entityID = "", entityType = "", documentID, gcsPath;
+		Double documentsSpace = null, spaceToBeDeducted = 0D;
+		Account account = null, parentAccount = null;
+		GcsService gcsService = null;
+		GcsFilename gcsFilename;
+		Map<Key, Entity> docEntityMap;
+		Set<Key> keys;
+		Entity entity;
+		List<Map<String, Object>> documentMaps;
+		List<Entity> entities = new ArrayList<Entity>();
+		Long size=0l;
+		
+		try {
+			
+				inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+				
+				entityID = (String) inputMap.get("entityID");
+				entityType = (String) inputMap.get("entityType");
+				documentMaps= (List<Map<String, Object>>) inputMap.get("documentMaps");
+	
+				gcsService = GcsServiceFactory.createGcsService();
+				
+				for(Map<String, Object> docMap : documentMaps) {
+					
+					documentID = (String) docMap.get("ID");
+					gcsPath = (String) docMap.get("gcsPath");
+	
+					gcsFilename = new GcsFilename(dsGCSBucketName, gcsPath);
+					gcsService.delete(gcsFilename);
+					
+					SearchService.deleteContactIndex_v1(accountID, documentID);
+					SearchService.deleteADocumentFromIndex(accountID, documentID);
+					
+					documentIDs.add(documentID);
+				}
+				
+				docEntityMap = DocumentDAO.getDocumentEntities(documentIDs);
+				keys = docEntityMap.keySet();
+				for(Key key : keys){
+					
+					entity = docEntityMap.get(key);
+					entity.setProperty("deleted", true);
+					size = (Long) entity.getProperty("size");
+	
+					spaceToBeDeducted = spaceToBeDeducted + (size.doubleValue() / 1048576 );
+					
+					entities.add(entity);
+				}
+				
+				if(!Utilities.isEmpty(DataStoreUtil.put(entities)));
+					isDocumentsUpdated = true;
+				
+				parentAccount = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + accountID+ "' && deleted == false");
+				documentsSpace = parentAccount.getDocumentsSpace();
+				documentsSpace = documentsSpace - spaceToBeDeducted;
+				parentAccount.setDocumentsSpace(documentsSpace);
+				AccountDAO.updateAccount(parentAccount);
+				isParentAccountUpdated = true;
+			
+				if(entityType.equals("account")){
+					
+			    	 account = DataStoreUtil.getObjectByFilter( Account.class , "ID == '" + entityID
+								+ "' && deleted == false && parentAccountID == '" + accountID + "'"  );
+			    	 linkedDocuments = account.getLinkedDocuments();
+			    	 if(linkedDocuments != null)
+			    		 linkedDocuments.removeAll(documentIDs);
+			    	 account.setLinkedDocuments(linkedDocuments);
+			    	 if(AccountDAO.updateAccount(account) != null)
+			    		 isEntityUpdated = true;
+			    	 
+			     }  else if(entityType.equals("contact") || entityType.equals("lead")) {
+			    	 
+			    	 Entity contact = DataStoreUtil.getEntityUsingKey( KeyFactory.createKey("Contact", entityID) );
+			    	 linkedDocuments = (List<String>) contact.getProperty("linkedDocuments");
+			    	 if(linkedDocuments != null)
+			    		 linkedDocuments.removeAll(documentIDs);
+			    	 contact.setProperty("linkedDocuments",linkedDocuments);
+			    	 if(ContactDAO.putContactEntity_v1(contact) != null)
+			    		 isEntityUpdated = true;
+			     }
+			
+				success = true;
+			
+		} catch(Exception e) {
+			
+			success = false;
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "accountID : " ).append( accountID ).append( "<br/></br>" );	
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			errorBuilder.append( "isParentAccountUpdated : " ).append( isParentAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isEntityUpdated : " ).append( isEntityUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "isDocumentsUpdated : " ).append( isDocumentsUpdated ).append( "<br/></br>" );
+			/*errorBuilder.append( "isSearchIndexCreated : " ).append( isSearchIndexCreated ).append( "<br/></br>" );*/
+			mLogger.log( java.util.logging.Level.SEVERE , errorBuilder.toString(), e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		} 
+		return map;
+	}
+	
+public static Map<String, Object> uploadContactPicture(String appID, StringBuilder requestDetails, String apikey, String json) {
+		
+		StringBuilder errorBuilder = null;
+		Map<String, Object> map = new HashMap<String, Object>(), inputMap = null;
+		boolean success = false, isParentAccountUpdated = false;
+		ObjectMapper mapper = new ObjectMapper();
+		String imageData = null, mimeType = null, fileName = null, contactID = null, photoID = null,departmentID = null, gcsPath = null;
+		byte[] fileDataInBytes = null;
+		Long fileSize = 0L;
+		Contact contact = null;
+		Account parentAccount = null;
+		Double documentsSpace = null;
+		GcsFilename gcsFilename = null;
+		GcsInputChannel gcsInputChannel;
+		InputStream istr = null;
+		byte[] arrayBytes = null;
+
+		try {
+			
+			try {
+				inputMap = mapper.readValue(json, new TypeReference<Map<String, Object>>(){});
+			}
+			catch(Exception e){
+				map.put("error", "Invalid JSON.");
+				return map;
+			}
+			
+			imageData = (String) inputMap.get("imageData");
+			mimeType = (String) inputMap.get("type");
+			fileName = (String) inputMap.get("name");
+			contactID = (String) inputMap.get("contactID");
+			departmentID = (String) inputMap.get("departmentID");
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			if(StringUtil.isBlank(mimeType) || StringUtil.isBlank(fileName) || StringUtil.isBlank(contactID) || StringUtil.isBlank(imageData)){
+				map.put("error", "Certain key(s) for creating a document are missing");
+				return map;
+			}
+			
+			 parentAccount = DataStoreUtil.getObjectByID( Account.class , apikey );
+			   documentsSpace = parentAccount.getDocumentsSpace();
+			   if(documentsSpace == null)
+					documentsSpace = 0D;
+				
+			if("SEN42".equals(apikey))
+				gcsPath = apikey+"/"+departmentID+"/contact_pictures/"+contactID;
+			else
+				gcsPath = apikey+"/contact_pictures/"+contactID;
+			   
+			gcsFilename = new GcsFilename(dsGCSBucketName, gcsPath);
+
+			photoID = contact.getPhotoID();
+			
+			if(!StringUtil.isBlank(photoID)){
+				URL url = new URL( photoID );
+				InputStream input = url.openStream();
+				arrayBytes = IOUtils.toByteArray( input );
+				fileSize = new Long(arrayBytes.length);
+				if(documentsSpace != 0D)
+					documentsSpace = documentsSpace - (fileSize.doubleValue() / 1048576 );
+			}
+			
+		   Base64 base64 = new Base64();
+		   fileDataInBytes = base64.decode(imageData.getBytes());
+		   fileSize = new Long(fileDataInBytes.length);
+		   
+		   if(fileSize < 1 || fileSize > 512000){
+			   map.put("error", "Document size is larger than 512000 bytes or less than 1 byte");
+			   return map;
+		   }
+		   if(StringUtil.isBlank(mimeType) || !(mimeType.equals("image/jpeg") || mimeType.equals("image/png") )){
+			   map.put("error", "Document type is not JPEG or PNG");
+			   return map;
+		   }
+		  
+			documentsSpace = documentsSpace + (fileSize.doubleValue() / 1048576 );
+			   
+			if(documentsSpace > 512 && !apikey.equals("SEN42")) {
+				   map.put("error","Looks like you have reached the maximum limit for document storage (512 MB) for a free account in Distributed Source. Please upgrade your account for more storage and lots of other benefits.");
+				   return map;
+			 }
+			
+			
+		   GcsService gcsService = GcsServiceFactory.createGcsService();
+		    GcsFileOptions options = new GcsFileOptions.Builder()
+		       .mimeType(mimeType)
+		       .acl("public_read")
+		       .addUserMetadata("name",fileName)
+		       .addUserMetadata("accountID", apikey).build();
+		    
+		    GcsOutputChannel writeChannel = gcsService.createOrReplace(gcsFilename, options);
+		     writeChannel.waitForOutstandingWrites();
+		     
+		     writeChannel.write(ByteBuffer.wrap
+		               (base64.decode(imageData.getBytes())));
+		     writeChannel.close();
+		     
+		     photoID = "http://storage.googleapis.com/"+dsGCSBucketName+"/"+gcsPath;
+		     
+		     contact.setPhotoID(photoID);
+		     ContactDAO.updateContact_v1(contact);
+			
+		    parentAccount.setDocumentsSpace(documentsSpace);
+		    AccountDAO.updateAccount(parentAccount);
+		    isParentAccountUpdated = true;
+		     
+		     map.put("photoID", photoID);
+			
+			success = true;
+			
+		} catch (Exception e){
+			
+			errorBuilder = new StringBuilder();
+			errorBuilder.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorBuilder.append( "apikey : " ).append( apikey ).append( "<br/></br>" );
+			errorBuilder.append( "isParentAccountUpdated : " ).append( isParentAccountUpdated ).append( "<br/></br>" );
+			errorBuilder.append( "json : " ).append( json ).append( "<br/></br>" );
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception -->  apikey :" + apikey+" json: "+json, e );
+			EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+			
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+}

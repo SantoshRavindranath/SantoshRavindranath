@@ -1,0 +1,299 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="Workbench">
+	<section name="">
+		<item value="1000" key="org.eclipse.search.resultpage.limit"/>
+	</section>
+	<section name="org.eclipse.jdt.ui.JavaSearchResultPage">
+		<item value="TRUE" key="org.eclipse.jdt.search.resultpage.limit_enabled"/>
+		<item value="1000" key="org.eclipse.jdt.search.resultpage.limit"/>
+	</section>
+	<section name="">
+		<item value="1000" key="org.eclipse.search.resultpage.limit"/>
+		<item value="TRUE" key="org.eclipse.jdt.search.resultpage.limit_enabled"/>
+		<item value="1000" key="org.eclipse.jdt.search.resultpage.limit"/>
+	</section>
+	<section name="DialogBounds_SearchDialog">
+		<item value="820" key="DIALOG_WIDTH"/>
+		<item value="196" key="DIALOG_Y_ORIGIN"/>
+		<item value="491" key="DIALOG_HEIGHT"/>
+		<item value="205" key="DIALOG_X_ORIGIN"/>
+		<item value="1|.SF NS Text|11.0|0|COCOA|1|.SFNSText-Regular" key="DIALOG_FONT_NAME"/>
+	</section>
+	<section name="Search">
+		<list key="Search.processedPageIds">
+			<item value="org.eclipse.rse.internal.files.ui.search.searchPage"/>
+			<item value="org.eclipse.search.internal.ui.text.TextSearchPage"/>
+			<item value="org.eclipse.mylyn.tasks.ui.search.page"/>
+			<item value="org.eclipse.jdt.ui.JavaSearchPage"/>
+			<item value="org.eclipse.wst.jsdt.ui.JavaSearchPage"/>
+			<item value="org.eclipse.pde.internal.ui.search.SearchPage"/>
+			<item value="org.eclipse.egit.ui.commitSearchPage"/>
+		</list>
+		<list key="Search.enabledPageIds">
+			<item value="org.eclipse.rse.internal.files.ui.search.searchPage"/>
+			<item value="org.eclipse.search.internal.ui.text.TextSearchPage"/>
+			<item value="org.eclipse.mylyn.tasks.ui.search.page"/>
+			<item value="org.eclipse.jdt.ui.JavaSearchPage"/>
+			<item value="org.eclipse.wst.jsdt.ui.JavaSearchPage"/>
+			<item value="org.eclipse.pde.internal.ui.search.SearchPage"/>
+			<item value="org.eclipse.egit.ui.commitSearchPage"/>
+		</list>
+	</section>
+	<section name="org.eclipse.search.text.FileSearchResultPage">
+		<item value="1000" key="org.eclipse.search.resultpage.limit"/>
+	</section>
+	<section name="SearchDialog">
+		<item value="org.eclipse.search.internal.ui.text.TextSearchPage" key="PREVIOUS_PAGE"/>
+	</section>
+	<section name="TextSearchPage">
+		<item value="false" key="CASE_SENSITIVE"/>
+		<item value="false" key="REG_EX_SEARCH"/>
+		<item value="false" key="SEARCH_DERIVED"/>
+		<item value="false" key="WHOLE_WORD"/>
+		<item value="12" key="HISTORY_SIZE"/>
+		<section name="HISTORY11">
+			<item value="false" key="isRegExSearch"/>
+			<item value="/getReqContactsWithContactSkillSet" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY2">
+			<item value="false" key="isRegExSearch"/>
+			<item value="dscrm.globalobjectcache.getinstance().setproduct" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.css"/>
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="EXTENSIONS">
+			<item value=", *.html, *.java, *.js, *.jsp, *.soy, *.vm" key="3"/>
+			<item value="*.html, *.java, *.js, *.jsp, *.soy, *.vm" key="2"/>
+			<item value="*.java, *.js, *.jsp, *.soy" key="10"/>
+			<item value="*.html, *.java, *.js, *.jsp, *.soy, *.vm, *.css" key="1"/>
+			<item value="*.css, *.html, *.java, *.js, *.jsp, *.soy, *.vm" key="0"/>
+			<item value="*.java, *.js, *.jsp, *.soy, *.vm" key="7"/>
+			<item value="*.java, *.js, *.jsp, *.soy, *.vm, *.html" key="6"/>
+			<item value="*.css, *.html, *.java, *.js, *.jsp, *.soy, *.vm, *.css" key="5"/>
+			<item value="*.html, *.java, *.js, *.jsp, *.soy, *.vm, " key="4"/>
+			<item value="*.js," key="9"/>
+			<item value="*.java, *.js, *.soy, *.vm, *.jsp" key="8"/>
+		</section>
+		<section name="HISTORY3">
+			<item value="false" key="isRegExSearch"/>
+			<item value="http://" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.css"/>
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY0">
+			<item value="false" key="isRegExSearch"/>
+			<item value="userstab" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.java"/>
+				<item value="*.soy"/>
+				<item value="*.jsp"/>
+				<item value="*.html"/>
+				<item value="*.css"/>
+				<item value="*.js"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY10">
+			<item value="false" key="isRegExSearch"/>
+			<item value="trackopen" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY1">
+			<item value="false" key="isRegExSearch"/>
+			<item value="kumaran.dhanasekaran@a-cti.com" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.java"/>
+				<item value="*.soy"/>
+				<item value="*.jsp"/>
+				<item value="*.html"/>
+				<item value="*.css"/>
+				<item value="*.js"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY9">
+			<item value="false" key="isRegExSearch"/>
+			<item value="NotificationSubscription" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY8">
+			<item value="false" key="isRegExSearch"/>
+			<item value="486" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY5">
+			<item value="false" key="isRegExSearch"/>
+			<item value="getcontactfordemo" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY4">
+			<item value="false" key="isRegExSearch"/>
+			<item value="getusersandskillsets" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY7">
+			<item value="false" key="isRegExSearch"/>
+			<item value="SEN42" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+		<section name="HISTORY6">
+			<item value="false" key="isRegExSearch"/>
+			<item value="updateHistoryComments" key="textPattern"/>
+			<item value="0" key="scope"/>
+			<item value="true" key="ignoreCase"/>
+			<item value="false" key="isWholeWord"/>
+			<list key="fileNamePatterns">
+				<item value="*.html"/>
+				<item value="*.java"/>
+				<item value="*.js"/>
+				<item value="*.jsp"/>
+				<item value="*.soy"/>
+				<item value="*.vm"/>
+			</list>
+			<list key="workingSets">
+			</list>
+		</section>
+	</section>
+	<section name="DialogBounds_SearchHistorySelectionDialog">
+		<item value="466" key="DIALOG_WIDTH"/>
+		<item value="347" key="DIALOG_HEIGHT"/>
+		<item value="1|.Helvetica Neue DeskInterface|11.0|0|COCOA|1|.HelveticaNeueDeskInterface-Regular" key="DIALOG_FONT_NAME"/>
+	</section>
+	<section name="ReplaceDialog2">
+		<list key="replace_with">
+			<item value="DataStoreUtil.getObjectByID( Contact.class , contactObjFrmDb.getLinkedContacts().get(0) );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , linkedContactID );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , companyID );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , leadID );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , userID );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , accountsID );"/>
+			<item value="DataStoreUtil.getObjectByID( Contact.class , personID );"/>
+		</list>
+	</section>
+	<section name="SearchDialog.ScopePart">
+		<item value="0" key="scope"/>
+	</section>
+	<section name="org.eclipse.wst.jsdt.ui.JavaSearchResultPage">
+		<item value="TRUE" key="org.eclipse.wst.jsdt.search.resultpage.limit_enabled"/>
+		<item value="1000" key="org.eclipse.wst.jsdt.search.resultpage.limit"/>
+	</section>
+</section>

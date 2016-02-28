@@ -1,0 +1,4 @@
+<factorypath>
+    <factorypathentry kind="PLUGIN" id="org.eclipse.jst.ws.annotations.core" enabled="true" runInBatchMode="false"/>
+    <factorypathentry kind="EXTJAR" id="/Users/santosh/Documents/sdk/appengine-java-sdk-1.9.26/lib/impl/appengine-api.jar" enabled="true" runInBatchMode="false"/>
+</factorypath>

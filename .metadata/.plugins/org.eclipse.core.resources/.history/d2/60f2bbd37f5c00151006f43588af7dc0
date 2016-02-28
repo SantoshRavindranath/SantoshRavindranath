@@ -1,0 +1,838 @@
+package com.adaptavant.distributedsource.service;
+
+import java.text.SimpleDateFormat;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.ConcurrentModificationException;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.TimeZone;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+
+import com.adaptavant.distributedsource.dao.ContactDAO;
+import com.adaptavant.distributedsource.dao.DataStoreUtil;
+import com.adaptavant.distributedsource.dao.RegistrationDAO;
+import com.adaptavant.distributedsource.dao.TestNumberDAO;
+import com.adaptavant.distributedsource.objects.Contact;
+import com.adaptavant.distributedsource.objects.Registration;
+import com.adaptavant.distributedsource.objects.TestNumber;
+import com.adaptavant.distributedsource.util.EmailUtil;
+import com.adaptavant.distributedsource.util.Utilities;
+import com.google.appengine.api.datastore.DatastoreFailureException;
+import com.google.appengine.api.datastore.Entity;
+
+import common.util.StringUtil;
+
+public class RegistrationService {
+	
+	private static final Logger	mLogger	= Logger.getLogger(RegistrationService.class.getPackage().getName());
+	
+	public static String generateDemoNumberForAnctLead(String contactID) throws Exception {
+		
+		String demoNumber = "";
+		int testNumberID = 0, nextTestNoID = 0;
+		TestNumber testNumberObj = null;
+		List<TestNumber> listOfTestNumber = new ArrayList<TestNumber>();
+		
+		
+		testNumberObj = DataStoreUtil.getObjectByFilter( TestNumber.class,"pnextnumberflag == 1 && status == 'active'" );
+		demoNumber = testNumberObj.getptestnumber();
+		testNumberID = testNumberObj.getptestnumberid();
+		
+		testNumberObj.setpnextnumberflag(0);
+		testNumberObj.setpUniquePin(contactID);
+		listOfTestNumber.add(testNumberObj);
+				
+		if(testNumberID < 100)
+			nextTestNoID = testNumberID + 1;
+		else if (testNumberID == 100)
+			nextTestNoID = 1;
+		
+		testNumberObj = null;
+		testNumberObj = DataStoreUtil.getObjectByFilter( TestNumber.class,"ptestnumberid == "+nextTestNoID+" && status == 'active'" );
+		testNumberObj.setpnextnumberflag(1);
+		listOfTestNumber.add(testNumberObj);
+		
+		DataStoreUtil.batchWrite(listOfTestNumber);
+		
+		return demoNumber;
+	}
+	
+	public static Registration insertLeadRegDetails(String accountID, List<String> listContactID, Map<String,Object> mapOfInfo) throws Exception {
+		
+		String accept = "", acceptEncoding = "", acceptLanguage = "", connection = "", cookie = "", referer = "",
+				remoteHost = "", googleAdClickID = "", brandID = null;	
+		Registration registrationObj = new Registration(), updatedRegistrationObj = null;
+		Date dateAdded = null;
+		
+		if(mapOfInfo.containsKey("accept") || mapOfInfo.containsKey("Accept")) {
+			accept = (String) mapOfInfo.get("accept");
+			if(!StringUtil.isBlank(accept))
+				registrationObj.setAccept(accept);
+		}
+		
+		if(mapOfInfo.containsKey("acceptEncoding")) {
+			acceptEncoding = (String) mapOfInfo.get("acceptEncoding");
+			if(!StringUtil.isBlank(acceptEncoding))
+				registrationObj.setAcceptEncoding(acceptEncoding);
+		}
+		
+		if(mapOfInfo.containsKey("acceptLanguage")) {
+			acceptLanguage = (String) mapOfInfo.get("acceptLanguage");
+			if(!StringUtil.isBlank(acceptLanguage))
+				registrationObj.setAcceptLanguage(acceptLanguage);
+		}
+		
+		if(mapOfInfo.containsKey("connection") || mapOfInfo.containsKey( "Connection" )) {
+			connection = (String) mapOfInfo.get("connection");
+			if(!StringUtil.isBlank(connection))
+				registrationObj.setConnection(connection);
+		}
+		
+		if(mapOfInfo.containsKey("cookie") || mapOfInfo.containsKey("Cookie")) {
+			cookie = (String) mapOfInfo.get("cookie");
+			if(!StringUtil.isBlank(cookie))
+				registrationObj.setCookie(cookie);
+		}
+		
+		if(mapOfInfo.containsKey("referer") || mapOfInfo.containsKey("Referer")) {
+			referer = (String) mapOfInfo.get("referer");
+			if(!StringUtil.isBlank(referer))
+				registrationObj.setReferer(referer);
+		}
+		
+		if(mapOfInfo.containsKey("remoteHost")) {
+			remoteHost = (String) mapOfInfo.get("remoteHost");
+			if(!StringUtil.isBlank(remoteHost))
+				registrationObj.setRemoteHost(remoteHost);
+		}
+		
+		if(mapOfInfo.containsKey("googleAdClickID")) {
+			googleAdClickID = (String) mapOfInfo.get("googleAdClickID");
+			if(!StringUtil.isBlank(googleAdClickID))
+				registrationObj.setGoogleAdClickID(googleAdClickID);
+		}
+				
+		if( mapOfInfo.containsKey( "brandID" ) && !StringUtil.isBlank((String) mapOfInfo.get("brandID")))		
+			brandID = (String) mapOfInfo.get("brandID");
+		
+		if(mapOfInfo.containsKey("dateAdded"))
+		{
+			dateAdded = (Date) mapOfInfo.get("dateAdded");
+			registrationObj.setDateAdded(dateAdded);
+		}
+		
+		String departmentID = (String) mapOfInfo.get("departmentID");
+		if(!StringUtil.isBlank(departmentID))
+			registrationObj.setDepartmentID(departmentID);
+		
+		registrationObj.setAccountID( accountID );
+		registrationObj.setBrandID(brandID);		
+		registrationObj.setLinkedContacts(listContactID);
+		
+		updatedRegistrationObj = DataStoreUtil.write(registrationObj);
+		
+		return updatedRegistrationObj;
+	}
+
+	public static boolean generateTestNumberTable() throws Exception {
+		
+		int len = 0;
+		boolean isTestNumberTableGen = false;
+		
+		String demonumbers[] = {
+				"8773257467", "8773257468", "8773257480", "8773257488", "8773257495",
+				"8773257496", "8773257497", "8773257498", "8773257499", "8773257763",
+				"8773257785", "8773258200", "8773258711", "8773258981", "8773259051",
+				"8773259052", "8773259055", "8773259056", "8773259060", "8773259063",
+				"8773259064", "8773259065", "8773259070", "8773259073", "8773259742",
+				"8773261118", "8773261123", "8773261142", "8773261919", "8773265164",
+				"8773265367", "8773265371", "8773265607", "8773265961", "8773267997",
+				"8773267998", "8773268102", "8773269238", "8773269321", "8773271035",
+				"8773271271", "8773271601", "8773271602", "8773271606", "8773271607",
+				"8773271750", "8773271981", "8773272107", "8773272242", "8773272246",
+				"8773272285", "8773272483", "8773273082", "8773273292", "8773273937",
+				"8773275427", "8773275687", "8773276074", "8773276078", "8773276079",
+				"8773276080", "8773276081", "8773276085", "8773276270", "8773276637",
+				"8773276966", "8773277162", "8773278001", "8773278408", "8773278409",
+				"8773278693", "8773278842", "8773279172", "8773279682", "8773280314",
+				"8773281194", "8773281286", "8773281357", "8773281416", "8773281886",
+				"8773282321", "8773282399", "8773282475", "8773282826", "8773283207",
+				"8773283285", "8773285258", "8773286354", "8773287453", "8773288576",
+				"8773289801", "8773290433", "8773290598", "8773290615", "8773291275",
+				"8773291279", "8773299571", "8773299576", "8773299969", "8773299970" };
+		
+		/*String demonumbers[] = { 
+				"8006352757" , "8006352780" , "8007066511" , "8007066572" , "8007066573" , "8007066604" , "8007066609" , "8007066615" ,
+				"8007066617" , "8007066618" , "8008038489" , "8008038490" , "8008038514" , "8008038516" , "8008038529" , "8008038532" ,
+				"8008038533" , "8008352608" , "8008352647" , "8008352718" , "8008352909" , "8008353022" , "8008353430" , "8008391943" ,
+		        "8008392012" , "8008392169" , "8008392197" , "8008392246" , "8008392252" , "8004612183" , "8004612417" , "8004612449" ,
+		        "8004612458" , "8004612596" , "8004614259" , "8004614359" , "8004614784" , "8004615502" , "8004616495" , "8004616705" ,
+		        "8004617310" , "8004618540" , "8004618597" , "8004618658" , "8004618659" , "8004618678" , "8004619578" , "8006800906" ,
+		        "8007047591" , "8007047636" , "8007047641" , "8007047684" , "8007095720" , "8008050816" , "8008087316" , "8008087751" ,
+		        "8008088543" , "8008088612" , "8004610376" , "8004610485" , "8004611592" , "8004611676" , "8004611683" , "8004612413" ,
+		        "8004612435" , "8004612497" , "8004612597" , "8004614207" , "8004614214" , "8004614237" , "8004614250" , "8004614354" ,
+		        "8004614425" , "8004614706" , "8004615165" , "8004615398" , "8004615406" , "8004616486" , "8004616508" , "8004616539" ,
+		        "8004617250" , "8004617420" , "8004617493" , "8004618497" , "8004618512" , "8004618523" , "8004618524" , "8004618552" ,
+		        "8004619489" , "8004619537" , "8005456981" , "8005457026" , "8006800797" , "8006800904" , "8006800910" , "8007047593" ,
+		        "8007047614" , "8007047635" , "8007047643" };*/
+		TestNumber testnumberObj = null;
+		List<TestNumber> listOfTestNumberObj = new ArrayList<TestNumber>();
+		
+		len = demonumbers.length;		
+		for (int i = 0; i < len; i++) {
+
+			testnumberObj = new TestNumber();
+			testnumberObj.setptestnumber(demonumbers[i]);
+			testnumberObj.setptestnumberid(i + 1);
+			testnumberObj.setStatus( "active" );
+			
+			if (i == 0)
+				testnumberObj.setpnextnumberflag(1);
+			else
+				testnumberObj.setpnextnumberflag(0);
+			
+			testnumberObj.setpUniquePin("");
+			listOfTestNumberObj.add(testnumberObj);
+		}
+		
+		DataStoreUtil.batchWrite(listOfTestNumberObj);
+		
+		isTestNumberTableGen = true;
+		
+		return isTestNumberTableGen;
+	}
+	
+	public static Registration getRegistrationDetailsForContact(String appID, StringBuilder requestDetails, String contactID) {
+		
+		StringBuilder errorInfo = null;
+		Registration registrationObj = null;
+		
+		List<String> linkedContacts = new ArrayList<String>();
+		
+		try {
+			
+			linkedContacts.add( contactID );
+			
+			registrationObj = RegistrationDAO.getRegistrationObject(linkedContacts);
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" contactID : ").append(contactID).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);		
+		}
+		return registrationObj;
+	}
+	
+	public static List<Registration> getRegistrationDetailsForContact(String appID, StringBuilder requestDetails, List<String> listOfContactID) {
+		
+		StringBuilder errorInfo = null;
+		List<Registration> listOfRegObj = null;
+		
+		try {
+			
+			listOfRegObj = RegistrationDAO.getRegistrationObjects(listOfContactID);
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" listOfContactID : ").append(listOfContactID).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		}
+		return listOfRegObj;
+	}
+	
+	/* For Importing Leads */
+	public static List<Registration> insertRegDetailsForImportedLeads(String accountID, Map<String,Object> mapOfRegistrations, Map<String,Object> mapOfInfo) throws Exception {
+		
+		String accept = "", acceptEncoding = "", acceptLanguage = "", connection = "", cookie = "", referer = "",
+				remoteHost = "", googleAdClickID = "", brandID = "";		
+		Registration registrationObj = null;
+		List<Registration> registrationObjList = new ArrayList <Registration>(), updatedRegistrationObjList = new ArrayList <Registration>();
+		List<String> listOfContactID = null;
+		
+		//if( ! (mapOfInfo.containsKey( "brandID" ) ) )
+			//throw new JsonMappingException("brandID key not found");
+		
+		brandID = (String) mapOfInfo.get("brandID");
+		brandID = null;
+		//if( StringUtil.isBlank( brandID ) )
+			//throw new NullPointerException("brandID not valid");
+
+		for(String contactID : mapOfRegistrations.keySet()) {
+			
+				listOfContactID = null;
+				
+				listOfContactID = (List<String>) mapOfRegistrations.get( contactID );
+				
+				registrationObj = new Registration();
+				
+				if(mapOfInfo.containsKey("accept")) {
+					accept = (String) mapOfInfo.get("accept");
+					if(!StringUtil.isBlank(accept))
+						registrationObj.setAccept(accept);
+				}
+				
+				if(mapOfInfo.containsKey("acceptEncoding")) {
+					acceptEncoding = (String) mapOfInfo.get("acceptEncoding");
+					if(!StringUtil.isBlank(acceptEncoding))
+						registrationObj.setAcceptEncoding(acceptEncoding);
+				}
+				
+				if(mapOfInfo.containsKey("acceptLanguage")) {
+					acceptLanguage = (String) mapOfInfo.get("acceptLanguage");
+					if(!StringUtil.isBlank(acceptLanguage))
+						registrationObj.setAcceptLanguage(acceptLanguage);
+				}
+				
+				if(mapOfInfo.containsKey("connection")) {
+					connection = (String) mapOfInfo.get("connection");
+					if(!StringUtil.isBlank(connection))
+						registrationObj.setConnection(connection);
+				}
+				
+				if(mapOfInfo.containsKey("cookie")) {
+					cookie = (String) mapOfInfo.get("cookie");
+					if(!StringUtil.isBlank(cookie))
+						registrationObj.setCookie(cookie);
+				}
+				
+				if(mapOfInfo.containsKey("referer")) {
+					referer = (String) mapOfInfo.get("referer");
+					if(!StringUtil.isBlank(referer))
+						registrationObj.setReferer(referer);
+				}
+				
+				if(mapOfInfo.containsKey("remoteHost")) {
+					remoteHost = (String) mapOfInfo.get("remoteHost");
+					if(!StringUtil.isBlank(remoteHost))
+						registrationObj.setRemoteHost(remoteHost);
+				}
+				
+				if(mapOfInfo.containsKey("googleAdClickID")) {
+					googleAdClickID = (String) mapOfInfo.get("googleAdClickID");
+					if(!StringUtil.isBlank(googleAdClickID))
+						registrationObj.setGoogleAdClickID(googleAdClickID);
+				}
+				
+				registrationObj.setAccountID( accountID );
+				registrationObj.setBrandID(brandID);		
+				registrationObj.setLinkedContacts(listOfContactID);
+				
+				registrationObjList.add( registrationObj );
+			}
+		
+		updatedRegistrationObjList = (List<Registration>)DataStoreUtil.batchWrite(registrationObjList);
+		
+		return updatedRegistrationObjList;
+	}
+	
+	@Deprecated
+	@SuppressWarnings( "unchecked" )
+    public static Map<String,Object> insertRegistrationEntities( String accountID, String json ) {
+		
+		boolean status = false;
+		
+		String contactID = null;
+		
+		List<String> listContactID = null, linkedContacts = null, listOfContactID = null;
+		List<Contact> listContact = null;
+		
+		Map<String,Object> mapOfInput = null, mapOfRegistrations = null, mapOfInfo = null;
+		Map<String,Object> responseMap = new HashMap<String,Object>();
+		
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mapOfInput = mapper.readValue( json , new TypeReference<Map<String,Object>>(){} );
+			
+			listContactID = (List <String>) mapOfInput.get( "contacts" );
+			
+			if(Utilities.isEmpty( listContactID ))
+				throw new NullPointerException("List Empty");
+			
+			listContact = ContactDAO.getContacts_v1( accountID , listContactID );
+			
+			if( listContact != null && !listContact.isEmpty() ) {
+				
+				mapOfRegistrations = new HashMap<String,Object>();
+				mapOfInfo = new HashMap<String,Object>();
+				
+				for( Contact contact : listContact ) {
+					
+					listOfContactID = null;
+					listOfContactID = new ArrayList <String>();
+					
+					contactID = contact.getID();					
+					linkedContacts = contact.getLinkedContacts();
+					
+					listOfContactID.add(contactID);
+					
+					if(!Utilities.isEmpty( linkedContacts ))
+						listOfContactID.add(contact.getLinkedContacts().get( 0 ));
+					
+					mapOfRegistrations.put( contactID , listOfContactID );
+					mapOfInfo.put( "brandID" , contact.getBrandID() );
+				}				
+				insertRegDetailsForImportedLeads( accountID, mapOfRegistrations , mapOfInfo );				
+			}			
+			status = true;
+		}
+		catch( Exception e ) {
+			status = false;
+			mLogger.log( java.util.logging.Level.SEVERE , "Exception" , e );
+		}
+		finally {
+			responseMap.put( "status" , status );
+		}
+		return responseMap;		
+	}
+	
+	public static Map<String,Object> updateRegistrationObj(String appID, StringBuilder requestDetails, String apikey, Long registrationID, String json) {
+		
+		String googleAdClickID = null, cookie = null;
+		StringBuilder errorInfo = null;
+		boolean success = false;
+		Registration registrationObj = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfRegInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mapOfRegInfo = mapper.readValue(json , new TypeReference<Map<String,Object>>(){});
+			googleAdClickID = (String) mapOfRegInfo.get("googleAdClickID");
+			cookie = (String) mapOfRegInfo.get("cookie");
+			
+			if(StringUtil.isBlank(googleAdClickID) && StringUtil.isBlank(cookie)) {
+				map.put("error", "GoogleAdClickID and cookie are empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			registrationObj = DataStoreUtil.getObjectByID( Registration.class , registrationID);
+			
+			if(!StringUtil.isBlank(googleAdClickID))
+				registrationObj.setGoogleAdClickID(googleAdClickID);
+			
+			if(!StringUtil.isBlank(cookie))
+				registrationObj.setCookie(cookie);
+			
+			DataStoreUtil.write(registrationObj);
+			
+			success = true;
+		} catch(javax.jdo.JDOObjectNotFoundException jdo) {
+			map.put("errorcode", 404);
+			map.put("error", "Registration object not found");
+			return map;	
+		}  catch(Exception e) {
+			errorInfo = new StringBuilder();
+			map.put("error", e.getMessage());
+			errorInfo.append(" RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			errorInfo.append(" registrationID : ").append(registrationID).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> insertRegistrationObj(String appID, StringBuilder requestDetails, String apikey, String json) {
+		
+		String brandID = null;
+		StringBuilder errorInfo = null;
+		boolean success = false;
+		Registration registrationObj = null;
+		List<String> listOfContactID = null;
+		List<Entity> listOfContactEntities = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfRegInfo = null;
+		ObjectMapper mapper = new ObjectMapper();
+		AccountService obj = new AccountService();
+		
+		try {
+			
+			mapOfRegInfo = mapper.readValue(json , new TypeReference<Map<String,Object>>(){});
+			brandID = (String) mapOfRegInfo.get("brandID");
+			listOfContactID = (List<String>) mapOfRegInfo.get("linkedContacts");
+			
+			if(StringUtil.isBlank(brandID)) {
+				map.put("error", "BrandID is empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			if(Utilities.isEmpty(listOfContactID))
+			{
+				map.put("error", "LinkedContacts is empty");
+				map.put("success", false);
+				return map;
+			}
+			
+			registrationObj = RegistrationDAO.getRegistrationObject(listOfContactID);
+			
+			if(registrationObj!=null)
+			{
+				map.put("error", "Registration already exists");
+				map.put("success", false);
+				return map;
+			}
+			
+			listOfContactEntities = ContactService.getContactEntitiesByKey_v1(listOfContactID);
+			
+			Collections.sort(listOfContactEntities, obj.new CreatedDateDesc());
+			Collections.reverse( listOfContactEntities );
+			
+			mapOfRegInfo.put("dateAdded", (Date) listOfContactEntities.get( 0 ).getProperty( "createdDate" ));
+			
+			String departmentID = (String) mapOfRegInfo.get("departmentID");
+			departmentID = Utilities.correctToNull(departmentID);
+			if(StringUtil.isBlank(departmentID))
+				departmentID = Utilities.getDepartmentForApiKey(apikey);
+			
+			mapOfRegInfo.put("departmentID", departmentID);
+			
+			registrationObj = insertLeadRegDetails(apikey, listOfContactID, mapOfRegInfo);
+			
+			success = true;
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			map.put("error", e.getMessage());
+			errorInfo.append(" RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);
+		} finally {
+			map.put("success", success);
+		}
+		
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> answerConnectLeadRegistration(String appID, StringBuilder requestDetails, String accountID, String json) {
+		
+		String contactID = null, companyID = null, demoNumber = "", brandID = "", brandCode = "", contactInfoAsJSON = "", leadInfoAsJSON = "";
+		StringBuilder errorInfo = null;
+		boolean success = false;
+		SimpleDateFormat PSTsdf = new SimpleDateFormat("MM/dd/yyyy hh-mm-ss a");
+		TimeZone PSTtimeZone = TimeZone.getTimeZone("US/Pacific");
+		PSTsdf.setTimeZone( PSTtimeZone );
+		List<Contact> listOfContact = null;
+		List<String> listOfContactID = null, listContactID = new ArrayList<String>();
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfContactInfo = null, mapOfHistoryInfo = null, mapOfLeadInfo = null,
+				mapOfLeadRegDetails = null, mapOfDocumentInput = null, mapOfLeadDetails = new HashMap<String,Object>();
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			mapOfLeadInfo = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
+			
+			if(Utilities.isEmpty(mapOfLeadInfo)) {
+				map.put("error", "JSON is empty");
+				map.put("success", false);
+				return map;
+			}
+				
+			brandID = (String) mapOfLeadInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID)) {
+//					map.put("error", "BrandID not sent");
+//					map.put("success", false);
+//					return map;
+//				}
+//			}
+			
+			if( mapOfLeadInfo.containsKey( "registration" ) ) {
+				mapOfLeadRegDetails = (Map<String,Object>) mapOfLeadInfo.get("registration");
+				mapOfLeadDetails.put("registration", mapOfLeadRegDetails);
+				mapOfLeadInfo.remove("registration");
+			}
+			
+			if(mapOfLeadInfo.containsKey("history")) {
+				mapOfHistoryInfo = (Map<String,Object>) mapOfLeadInfo.get("history");
+				mapOfLeadDetails.put("history", mapOfHistoryInfo);
+				mapOfLeadInfo.remove("history");
+			}
+			
+			if(mapOfLeadInfo.containsKey("linkedDocuments")){
+				mapOfDocumentInput = (Map<String, Object>) mapOfLeadInfo.get("linkedDocuments");
+				mapOfLeadDetails.put("linkedDocuments", mapOfDocumentInput);
+				mapOfLeadInfo.remove("linkedDocuments");
+			}
+			
+			contactInfoAsJSON = mapper.writeValueAsString(mapOfLeadInfo);
+			
+			mapOfContactInfo = ContactService.createContact_v1(appID, requestDetails, accountID, contactInfoAsJSON);
+			if(!(Boolean)mapOfContactInfo.get("success")) {
+				map.put("error", "Lead not registered");
+				map.put("success", false);
+				return map;
+			}
+			
+			listOfContact = (List<Contact>) mapOfContactInfo.get("contact");
+			for(Contact contactFromItr : listOfContact) {
+				listContactID.add( (String) contactFromItr.getID() );
+				if("person".equalsIgnoreCase(contactFromItr.getCategory()))
+					contactID = contactFromItr.getID();
+				else if("company".equalsIgnoreCase(contactFromItr.getCategory()))
+					companyID = contactFromItr.getID();
+			}			
+			
+//			if("5a6e67a6-8bfd-45f5-a774-3462cb0c4e4c".equals(brandID))
+//				brandCode = "anct";
+//			else if("c26495e9-f41e-4b8d-a442-22ab742563b7".equals(brandID)) 
+//				brandCode = "anfo";
+//				
+//			if("anct".equalsIgnoreCase(brandCode) || "anfo".equalsIgnoreCase(brandCode)) {
+//				//demoNumber = generateDemoNumberForAnctLead(contactID);
+//				demoNumber = assignDemoNoForLead_v1(contactID);
+//			}				
+			
+			if("5a6e67a6-8bfd-45f5-a774-3462cb0c4e4c".equals(brandID) || "c26495e9-f41e-4b8d-a442-22ab742563b7".equalsIgnoreCase(brandID)
+					|| "b80d69bd-c236-4aff-82d8-1675f087c8d7".equals(brandID) || "b2f8613c-0d56-40ae-a41d-55aceca62e86".equals( brandID )) {			
+				demoNumber = assignDemoNoForLead_v1(contactID);
+			}
+			
+			mapOfLeadDetails.put("brandID", brandID);
+			mapOfLeadDetails.put("demoNumber", demoNumber);
+			
+			leadInfoAsJSON = mapper.writeValueAsString(mapOfLeadDetails);
+
+			JobService.addAnswerConnectLeadRegistrationJob(appID, requestDetails, accountID, contactID, leadInfoAsJSON);
+			
+			success = true;
+			
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);		
+		} finally {
+			map.put("success", success);
+			map.put("ID", contactID);
+			if("5a6e67a6-8bfd-45f5-a774-3462cb0c4e4c".equals(brandID) || "c26495e9-f41e-4b8d-a442-22ab742563b7".equalsIgnoreCase(brandID)
+					|| "b80d69bd-c236-4aff-82d8-1675f087c8d7".equals(brandID) || "b2f8613c-0d56-40ae-a41d-55aceca62e86".equals( brandID )) {
+				map.put("demoNumber", demoNumber);
+				map.put("companyID", companyID);
+			}
+		}
+		return map;
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static Map<String,Object> answerConnectLeadRegistrationJob(String cacheKey) {
+		
+		String appID = null, accountID = "", contactID = "", demoNumber = "", historyComments = "", refererURLOfLead = "", brandCode = "", 
+					historyInfoAsJSON = "", brandID = "", requestDetailsStr = null, json = null;
+		StringBuilder requestDetails = null, strForHistory = null, errorInfo = null;
+		boolean success = false;
+		SimpleDateFormat PSTsdf = new SimpleDateFormat("MM/dd/yyyy hh-mm-ss a");
+		TimeZone PSTtimeZone = TimeZone.getTimeZone("US/Pacific");
+		PSTsdf.setTimeZone( PSTtimeZone );
+		Registration registrationObj = null;
+		Object leadInfoObject = null;
+		Contact contact = null;
+		List<String> listOfContactID = new ArrayList<String>(), linkedContacts = null;
+		Map<String,Object> map = new HashMap<String,Object>(), mapOfHistoryInfo = null, mapOfLeadInfo = null,
+										mapOfLeadRegDetails = null;
+		ObjectMapper mapper = new ObjectMapper();
+		
+		try {
+			
+			leadInfoObject =  CacheService.get(cacheKey);
+			
+			if(leadInfoObject == null)
+				leadInfoObject =  DataStoreObjectService.get(cacheKey);
+			
+			json = (String) leadInfoObject;
+			
+			mapOfLeadInfo = mapper.readValue(json, new TypeReference<Map<String,Object>>(){});
+			
+			accountID = (String) mapOfLeadInfo.get("accountID");
+			contactID = (String) mapOfLeadInfo.get("contactID");
+			appID = (String) mapOfLeadInfo.get("appID");
+			requestDetailsStr = (String) mapOfLeadInfo.get("requestDetails");
+			
+			String departmentID = (String) mapOfLeadInfo.get("departmentID");
+			departmentID = Utilities.correctToNull(departmentID);
+			if(StringUtil.isBlank(departmentID)) {
+				
+				departmentID = Utilities.getDepartmentForApiKey(accountID);
+				
+				if(!StringUtil.isBlank(departmentID))
+					accountID = "SEN42";								
+			}				
+			
+			requestDetails = new StringBuilder("AnswerConnect Registration Request Details - "+requestDetailsStr);
+			
+			if(Utilities.isEmpty(mapOfLeadInfo)) {
+				map.put("error", "JSON is empty");
+				map.put("success", false);
+				return map;
+			}
+				
+			brandID = (String) mapOfLeadInfo.get("brandID");
+//			if(anctAccountID.equalsIgnoreCase(accountID)) {
+//				if(StringUtil.isBlank(brandID)) {
+//					map.put("error", "BrandID not sent");
+//					map.put("success", false);
+//					return map;
+//				}
+//			}
+			
+			mLogger.log( java.util.logging.Level.INFO , " Create Registration --> accountID :" + accountID + " contactID : " + contactID + " JSON :" + json);
+			
+			contact = DataStoreUtil.getObjectByID( Contact.class , contactID );
+			
+			listOfContactID.add(contactID);
+			
+			linkedContacts = contact.getLinkedContacts();
+			if(!Utilities.isEmpty(linkedContacts))
+				listOfContactID.add(linkedContacts.get(0));
+				
+			demoNumber = (String) mapOfLeadInfo.get("demoNumber");
+			
+			if( mapOfLeadInfo.containsKey( "registration" ) )
+				mapOfLeadRegDetails = (Map<String,Object>) mapOfLeadInfo.get("registration");
+			
+			if(!StringUtil.isBlank(departmentID))
+				mapOfLeadRegDetails.put("departmentID", departmentID);
+				
+			if(mapOfLeadRegDetails != null && !mapOfLeadRegDetails.isEmpty())
+				registrationObj = RegistrationService.insertLeadRegDetails(accountID, listOfContactID, mapOfLeadRegDetails);
+			
+			mapOfHistoryInfo = (Map<String,Object>) mapOfLeadInfo.get("history");
+			
+			if(!Utilities.isEmpty( mapOfHistoryInfo )) {
+				mapOfHistoryInfo.put( "type" , "log" );
+				mapOfHistoryInfo.put( "ownerName" , "Log" );
+				mapOfLeadInfo.put( "history" , mapOfHistoryInfo );
+			}
+			
+			ContactService.insertHistoryForContact( appID , requestDetails , accountID , departmentID , contact , mapOfLeadInfo);
+			
+			ContactService.linkExistingOrNewDocumentToContact( appID , requestDetails , accountID , departmentID , contact , mapOfLeadInfo , map );
+			
+			ContactDAO.insertContact_v1(contact);
+			
+			if(registrationObj != null )
+				refererURLOfLead = registrationObj.getReferer();
+			
+			/*if("5a6e67a6-8bfd-45f5-a774-3462cb0c4e4c".equals(brandID))
+				brandCode = "anct";
+			else if("c26495e9-f41e-4b8d-a442-22ab742563b7".equals(brandID)) 
+				brandCode = "anfo";
+			else if ("b80d69bd-c236-4aff-82d8-1675f087c8d7".equals(brandID))
+				brandCode = "lern";*/
+			
+			/*if("anct".equalsIgnoreCase(brandCode) || "anfo".equalsIgnoreCase(brandCode) || "lern".equalsIgnoreCase(brandCode)) {
+			
+				strForHistory = new StringBuilder();
+				strForHistory.append("LeadCreatedDate - ").append(PSTsdf.format(new Date()));
+				
+				if(!StringUtil.isBlank(demoNumber))
+					strForHistory.append(" Demo Number - ").append(demoNumber);
+				
+				strForHistory.append(" Source URL - ").append(refererURLOfLead).append(" Brand Code - ").append(brandCode);
+				historyComments = strForHistory.toString();
+				
+				mapOfHistoryInfo = new HashMap<String,Object>();
+				listOfContactID = new ArrayList<String>();
+				listOfContactID.add(contactID);
+				mapOfHistoryInfo.put("historyComments", historyComments);
+				mapOfHistoryInfo.put("linkedContacts", listOfContactID);
+				mapOfHistoryInfo.put("ownerName","Log");
+				mapOfHistoryInfo.put("type","log");
+				
+				if(!StringUtil.isBlank(departmentID))
+					mapOfHistoryInfo.put("departmentID", departmentID);
+				
+				historyInfoAsJSON = mapper.writeValueAsString(mapOfHistoryInfo);
+				
+				HistoryService.insertHistory_v1(appID, requestDetails, accountID, historyInfoAsJSON);
+			}*/
+			if("5a6e67a6-8bfd-45f5-a774-3462cb0c4e4c".equals(brandID) || "c26495e9-f41e-4b8d-a442-22ab742563b7".equalsIgnoreCase(brandID)
+					|| "b80d69bd-c236-4aff-82d8-1675f087c8d7".equals(brandID) || "b2f8613c-0d56-40ae-a41d-55aceca62e86".equals( brandID )) {
+			
+				strForHistory = new StringBuilder();
+				
+				strForHistory.append(" Demo Number - ").append(demoNumber);				
+				historyComments = strForHistory.toString();				
+				mapOfHistoryInfo = new HashMap<String,Object>();
+				listOfContactID = new ArrayList<String>();
+				listOfContactID.add(contactID);
+				mapOfHistoryInfo.put("historyComments", historyComments);
+				mapOfHistoryInfo.put("linkedContacts", listOfContactID);
+				mapOfHistoryInfo.put("ownerName","Log");
+				mapOfHistoryInfo.put("type","log");
+				
+				if(!StringUtil.isBlank(departmentID))
+					mapOfHistoryInfo.put("departmentID", departmentID);
+				
+				historyInfoAsJSON = mapper.writeValueAsString(mapOfHistoryInfo);
+				
+				HistoryService.insertHistory_v1(appID, requestDetails, accountID, historyInfoAsJSON);
+			}
+			
+			CacheService.remove(cacheKey);
+			DataStoreObjectService.remove(Arrays.asList(cacheKey));
+						
+			success = true;
+			
+		} catch(Exception e) {
+			errorInfo = new StringBuilder();
+			success = false;
+			map.put("error", e.getMessage());
+			errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/></br>");
+			errorInfo.append(" JSON : ").append(json).append("<br/></br>");
+			mLogger.log(Level.SEVERE , "\n " + errorInfo, e );	
+			EmailUtil.sendExceptionMail(appID, errorInfo, e);		
+		} finally {
+			map.put("success", success);
+		}
+		return map;
+	}
+	
+	/* Assigns demono for AnswerConnect & AnswerForce website registrations */	
+	public static String assignDemoNoForLead_v1(String contactID) {
+		
+		String demoNumber = null;
+		List <Map <String , Object>> listOfFilterMap = new ArrayList <Map <String , Object>>();
+		List <Map <String , Object>> listOfSortingMap = new ArrayList <Map <String , Object>>();
+		try {
+			   DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "status" , "EQUAL" , "active" );
+			   DataStoreUtil.constructListOfSortingForFields( listOfSortingMap , "lastUpdatedDate" , "ASCENDING" );
+			   Map <String , Object> result = DataStoreUtil.getEntitiesUsingQueryCursor( "TestNumber" , 1 , 1 , "" , listOfFilterMap ,
+					listOfSortingMap );
+			   List <Entity> listOfEntity = (List <Entity>) result.get( "entity" );
+			   Entity entity = listOfEntity.get( 0 );
+			   demoNumber = (String) entity.getProperty("ptestnumber");
+			   entity.setProperty("pUniquePin", contactID);
+			   DataStoreUtil.put(entity);
+			
+		} catch(NullPointerException | NoSuchElementException 
+				| IllegalArgumentException |  ConcurrentModificationException 
+				| DatastoreFailureException ignoreExp) {
+			mLogger.log(Level.SEVERE , " Error in assignDemoNoForLead --> contactID : " + contactID,ignoreExp);	
+		} catch(Exception e) {
+			mLogger.log(Level.SEVERE , " Error in assignDemoNoForLead --> contactID : " + contactID,e);
+		}
+		return demoNumber;		
+	}
+}	

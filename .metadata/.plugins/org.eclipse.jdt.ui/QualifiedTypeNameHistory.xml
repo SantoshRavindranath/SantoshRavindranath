@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<qualifiedTypeNameHistroy>
+<fullyQualifiedTypeName name="com.distributedsource.util.DistributedSourceUtil"/>
+<fullyQualifiedTypeName name="com.adaptavant.distributedsource.objects.Account"/>
+<fullyQualifiedTypeName name="com.adaptavant.crm.util.Utilities"/>
+<fullyQualifiedTypeName name="com.adaptavant.crm.dto.Deal"/>
+<fullyQualifiedTypeName name="java.util.Map.Entry"/>
+<fullyQualifiedTypeName name="com.adaptavant.distributedsource.dao.DataStoreUtil"/>
+</qualifiedTypeNameHistroy>

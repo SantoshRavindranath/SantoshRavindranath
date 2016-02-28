@@ -1,0 +1,1335 @@
+package com.adaptavant.distributedsource.service;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+import org.codehaus.jackson.map.DeserializationConfig;
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+
+import com.adaptavant.distributedsource.dao.AccountDAO;
+import com.adaptavant.distributedsource.dao.ContactDAO;
+import com.adaptavant.distributedsource.dao.DataStoreUtil;
+import com.adaptavant.distributedsource.dao.HistoryDAO;
+import com.adaptavant.distributedsource.objects.Account;
+import com.adaptavant.distributedsource.objects.Contact;
+import com.adaptavant.distributedsource.objects.History;
+import com.adaptavant.distributedsource.util.EmailUtil;
+import com.adaptavant.distributedsource.util.Utilities;
+import com.google.appengine.api.datastore.Entity;
+import com.google.appengine.api.datastore.Key;
+import common.util.StringUtil;
+
+public class HistoryService
+	{
+
+		private static final Logger mLogger = Logger.getLogger( HistoryService.class.getPackage().getName() );
+
+		public static Map <String , Object> insertHistory_v1( String appID , StringBuilder requestDetails , String accountID , String historyInfoJSON )
+			{
+
+				boolean status = false;
+
+				String historyID = "" , accountsID = "" , contactID = null;
+
+				StringBuilder errorInfo = null;
+
+				List <String> listOfContactID = null;
+				List <Contact> listOfContactObj = null;
+
+				Map <String , Object> map = new HashMap <String , Object>() , mapOfHistoryInfo = null;
+
+				ObjectMapper mapper = new ObjectMapper();
+				History historyObj = null , persistedHistory = null;
+
+				try
+					{
+
+						mapOfHistoryInfo = mapper.readValue( historyInfoJSON , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						historyObj = constructHistoryObj_v1( accountID , mapOfHistoryInfo );
+
+						persistedHistory = DataStoreUtil.write(historyObj);
+
+						historyID = persistedHistory.getID();
+						contactID = persistedHistory.getLinkedContact();
+						accountsID = persistedHistory.getLinkedAccount();
+
+						if ( !StringUtil.isBlank( contactID ) )
+							{
+								listOfContactID = new ArrayList <>();
+								listOfContactID.add( contactID );
+								RelationshipService.addHistoryIDToContacts( accountID , listOfContactID , historyID );
+							}
+
+						if ( !StringUtil.isBlank( accountsID ) )
+							RelationshipService.associateHistoryToAccounts( appID , requestDetails , accountID , accountsID , historyID );
+
+						status = true;
+
+					}
+				catch ( Exception e )
+					{
+						errorInfo = new StringBuilder();
+						status = false;
+						map.put( "error" , e.getMessage() );
+						errorInfo.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" );
+						errorInfo.append( " JSON : " ).append( historyInfoJSON ).append( "<br/></br>" );
+						mLogger.log( Level.SEVERE , "\n " + errorInfo , e );
+						EmailUtil.sendExceptionMail( appID , errorInfo , e );
+					}
+				finally
+					{
+						map.put( "success" , status );
+						map.put( "history" , persistedHistory );
+						map.put( "relationship" , listOfContactObj );
+						map.put( "id" , historyID );
+					}
+				return map;
+			}
+
+		public static Map <String , Object> insertHistory_v2( String appID , StringBuilder requestDetails , String accountID , String historyInfoJSON )
+			{
+
+				boolean status = false;
+
+				String historyID = "" , accountsID = null , contactID = null;
+
+				StringBuilder errorInfo = null;
+
+				List <String> listOfAccountsID = null;
+				List <String> listOfContactID = null , linkedHistory = new ArrayList <String>();
+
+				Map <String , Object> map = new HashMap <String , Object>() , mapOfHistoryInfo = null;
+
+				ObjectMapper mapper = new ObjectMapper();
+				History historyObj = null , persistedHistory = null;
+
+				try
+					{
+						mLogger.log( Level.INFO , "insertHistory_v2 JSON:-> " + historyInfoJSON);
+
+						mapOfHistoryInfo = mapper.readValue( historyInfoJSON , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						if ( mapOfHistoryInfo.containsKey( "entityType" ) )
+							map.put( "entityType" , mapOfHistoryInfo.get( "entityType" ) );
+
+						historyObj = constructHistoryObj_v1( accountID , mapOfHistoryInfo );
+
+						persistedHistory = DataStoreUtil.write( historyObj );
+
+						historyID = persistedHistory.getID();
+						contactID = persistedHistory.getLinkedContact();
+						accountsID = persistedHistory.getLinkedAccount();
+
+						linkedHistory.add( historyID );
+
+						if ( !StringUtil.isBlank( contactID ) )
+							{
+								listOfContactID = new ArrayList <>();
+								listOfContactID.add( contactID );
+							}
+
+						if ( !StringUtil.isBlank( accountsID ) )
+							{
+								listOfAccountsID = new ArrayList <>();
+								listOfAccountsID.add( accountsID );
+							}
+
+						RelationshipService.associateHistoryToContactsAndAccounts( accountID , listOfAccountsID , listOfContactID , linkedHistory );
+
+						status = true;
+
+					}
+				catch ( Exception e )
+					{
+						errorInfo = new StringBuilder();
+						status = false;
+						map.put( "error" , e.getMessage() );
+						errorInfo.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" );
+						errorInfo.append( " JSON : " ).append( historyInfoJSON ).append( "<br/></br>" );
+						mLogger.log( Level.SEVERE , "\n " + errorInfo , e );
+						EmailUtil.sendExceptionMail( appID , errorInfo , e );
+					}
+				finally
+					{
+						map.put( "success" , status );
+						map.put( "history" , persistedHistory );
+						map.put( "id" , historyID );
+					}
+				return map;
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static History constructHistoryObj_v1( String accountID , Map <String , Object> mapOfHistoryInfo ) throws Exception
+			{
+
+				boolean isFlagged = false;
+
+				String historyType = "note" , historyComments = "" , resolutionComments = "" , taskComments = "" , ownerID = "" , dealIDInStr = "" , taskId = "" , historyID = "" , ownerName = "";
+				String departmentID = null , accountsID = null , contactID = null , linkedReport = null;
+
+				Long dealID = null;
+				List <String> listOfAccountsId = new ArrayList <String>();
+				List <Long> listOfDealID = null;
+				List <Object> linkedDeals = null;
+				List <String> listOfContactID = new ArrayList <>() , linkedReports = new ArrayList <String>();
+				History history = new History();
+
+				// SimpleDateFormat sdfDateAndTime = new SimpleDateFormat( "yyyy-MM-dd HH:mm:ss.SSSSSS" );
+				// Date createdDate = null;
+
+				if ( mapOfHistoryInfo.containsKey( "linkedContacts" ) )
+					listOfContactID = (List <String>) mapOfHistoryInfo.get( "linkedContacts" );
+
+				if ( mapOfHistoryInfo.containsKey( "linkedDeals" ) )
+					{
+						listOfDealID = new ArrayList <Long>();
+						linkedDeals = (List <Object>) mapOfHistoryInfo.get( "linkedDeals" );
+
+						for ( Object dealIdInItr : linkedDeals )
+							{
+
+								dealIDInStr = String.valueOf( dealIdInItr );
+								if ( StringUtil.isBlank( dealIDInStr ) || "null".equalsIgnoreCase( dealIDInStr ) )
+									continue;
+								else
+									dealID = Long.valueOf( dealIDInStr );
+
+								listOfDealID.add( dealID );
+							}
+					}
+
+				if ( mapOfHistoryInfo.containsKey( "linkedAccounts" ) )
+					{
+						listOfAccountsId = (List <String>) mapOfHistoryInfo.get( "linkedAccounts" );
+					}
+
+				if ( mapOfHistoryInfo.containsKey( "linkedReport" ) )
+					linkedReports = (List <String>) mapOfHistoryInfo.get( "linkedReport" );
+
+				if ( mapOfHistoryInfo.containsKey( "flagged" ) )
+					isFlagged = (Boolean) mapOfHistoryInfo.get( "flagged" );
+
+				if ( mapOfHistoryInfo.containsKey( "type" ) )
+					historyType = (String) mapOfHistoryInfo.get( "type" );
+
+				if ( mapOfHistoryInfo.containsKey( "historyComments" ) )
+					historyComments = (String) mapOfHistoryInfo.get( "historyComments" );
+
+				if ( mapOfHistoryInfo.containsKey( "resolutionComments" ) )
+					resolutionComments = (String) mapOfHistoryInfo.get( "resolutionComments" );
+
+				if ( mapOfHistoryInfo.containsKey( "taskComments" ) )
+					taskComments = (String) mapOfHistoryInfo.get( "taskComments" );
+
+				/*
+				 * if( mapOfHistoryInfo.containsKey("taskStatus") ) taskStatus = ( String )
+				 * mapOfHistoryInfo.get("taskStatus");
+				 */
+
+				if ( mapOfHistoryInfo.containsKey( "ownerID" ) )
+					ownerID = (String) mapOfHistoryInfo.get( "ownerID" );
+
+				if ( mapOfHistoryInfo.containsKey( "ownerName" ) )
+					ownerName = (String) mapOfHistoryInfo.get( "ownerName" );
+
+				if ( mapOfHistoryInfo.containsKey( "taskID" ) )
+					{
+						taskId = (String) mapOfHistoryInfo.get( "taskID" );
+					}
+
+				if ( mapOfHistoryInfo.containsKey( "historyID" ) )
+					{
+						historyID = (String) mapOfHistoryInfo.get( "historyID" );
+
+						if ( StringUtil.isBlank( historyID ) )
+							throw new NullPointerException( "Invalid HistoryID : " + historyID );
+					}
+				else
+					historyID = UUID.randomUUID().toString();
+
+				departmentID = (String) mapOfHistoryInfo.get( "departmentID" );
+				departmentID = Utilities.correctToNull( departmentID );
+
+				if ( !StringUtil.isBlank( departmentID ) )
+					history.setDepartmentID( departmentID );
+
+				history.setID( historyID );
+				history.setAccountID( accountID );
+				history.setDeleted( false );
+				history.setFlagged( isFlagged );
+
+				if ( !Utilities.isEmpty( listOfAccountsId ) )
+					{
+						accountsID = listOfAccountsId.get( 0 );
+						history.setLinkedAccount( accountsID );
+					}
+
+				if ( !Utilities.isEmpty( listOfContactID ) )
+					{
+						contactID = listOfContactID.get( 0 );
+						history.setLinkedContact( contactID );
+					}
+
+				if ( !Utilities.isEmpty( listOfDealID ) )
+					{
+						dealID = listOfDealID.get( 0 );
+						history.setLinkedDeal( dealID );
+					}
+
+				if ( !StringUtil.isBlank( historyType ) )
+					history.setType( historyType );
+
+				if ( !StringUtil.isBlank( historyComments ) )
+					history.setHistoryComments( historyComments );
+
+				if ( !StringUtil.isBlank( resolutionComments ) )
+					history.setResolutionComments( resolutionComments );
+
+				if ( !StringUtil.isBlank( taskComments ) )
+					history.setTaskComments( taskComments );
+
+				/*
+				 * if( !StringUtil.isBlank(taskStatus) ) history.setTaskStatus(taskStatus);
+				 */
+
+				if ( !StringUtil.isBlank( ownerID ) )
+					history.setOwnerID( ownerID );
+
+				if ( !StringUtil.isBlank( ownerName ) )
+					history.setOwnerName( ownerName );
+
+				if ( !StringUtil.isBlank( taskId ) )
+					{
+						history.setLinkedTask( taskId );
+					}
+
+				if ( !Utilities.isEmpty( linkedReports ) )
+					{
+						linkedReport = linkedReports.get( 0 );
+						history.setLinkedReport( linkedReport );
+					}
+
+				if ( mapOfHistoryInfo.containsKey( "createdDate" ) )
+					{
+
+						Long createdDate = 0L;
+						String createdDateStr = null;
+						Date historyCreatedDate = null;
+
+						Object createdDateObj = null;
+
+						createdDateObj = mapOfHistoryInfo.get( "createdDate" );
+						createdDateStr = String.valueOf( createdDateObj );
+						createdDate = Long.valueOf( createdDateStr );
+
+						historyCreatedDate = new Date( createdDate );
+						history.setCreatedDate( historyCreatedDate );
+					}
+
+				return history;
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static Map <String , Object> insertHistoryForBulkTasks( String appID , StringBuilder requestDetails , String accountId , String lJson )
+			{
+
+				boolean status = false;
+				String historyComments = "" , type = "" , userId = "";
+				String taskComments = "" , resolutionComments = "" , taskId = "" , historyID = "" , dealIDInStr = "" , ownerName = "";
+
+				StringBuilder errorBuilder = null;
+
+				List <String> listOfAccountsId = null;
+				List <Object> listOfDealIdObj = null;
+				List <String> listOfContactId = null;
+				List <Long> listOfDealID = new ArrayList <Long>();
+				List <String> listOfTaskId = new ArrayList <String>();
+				List <History> lListOfPersistedContactHistory = null;
+				List <Map <String , Object>> lListOfHistoryMap = null;
+				List <History> lListOfContactHistory = new ArrayList <History>();
+				Contact owner = null;
+
+				Map <String , Object> lMapOfHistoryInfoInJson = null;
+				Map <String , Object> lMap = new HashMap <String , Object>();
+
+				Long dealID = 0L;
+				History historyObj = null;
+				ObjectMapper objectMapper = new ObjectMapper();
+
+				try
+					{
+						lMapOfHistoryInfoInJson = objectMapper.readValue( lJson , HashMap.class );
+
+						if ( !lMapOfHistoryInfoInJson.containsKey( "history" ) )
+							throw new NullPointerException( "History information not present in JSON" );
+
+						lListOfHistoryMap = (List <Map <String , Object>>) lMapOfHistoryInfoInJson.get( "history" );
+
+						if ( lListOfHistoryMap == null || lListOfHistoryMap.isEmpty() )
+							throw new NullPointerException( "History information not present in JSON" );
+
+						for ( Map <String , Object> lMapOfHistoryInfo : lListOfHistoryMap )
+							{
+
+								historyComments = "";
+								taskComments = "";
+								taskId = "";
+								type = "";
+								userId = "";
+								historyID = "";
+								listOfContactId = null;
+								listOfDealIdObj = null;
+								listOfAccountsId = null;
+								historyObj = new History();
+								dealID = 0L;
+								dealIDInStr = "";
+								listOfDealID = new ArrayList <>();
+
+								historyComments = (String) lMapOfHistoryInfo.get( "historycomments" );
+								resolutionComments = (String) lMapOfHistoryInfo.get( "resolutioncomments" );
+								taskComments = (String) lMapOfHistoryInfo.get( "taskcomments" );
+								taskId = (String) lMapOfHistoryInfo.get( "taskid" );
+								type = (String) lMapOfHistoryInfo.get( "type" );
+								userId = (String) lMapOfHistoryInfo.get( "userid" );
+								ownerName = (String) lMapOfHistoryInfo.get( "ownerName" );
+								listOfContactId = (List <String>) lMapOfHistoryInfo.get( "contacts" );
+								listOfAccountsId = (List <String>) lMapOfHistoryInfo.get( "accounts" );
+								listOfDealIdObj = (List <Object>) lMapOfHistoryInfo.get( "deals" );
+
+								if ( listOfDealIdObj != null && !listOfDealIdObj.isEmpty() )
+									{
+
+										for ( Object dealIdInItr : listOfDealIdObj )
+											{
+
+												dealIDInStr = String.valueOf( dealIdInItr );
+
+												if ( StringUtil.isBlank( dealIDInStr ) || "null".equalsIgnoreCase( dealIDInStr ) )
+													{
+														continue;
+													}
+												else
+													{
+														dealID = Long.valueOf( dealIDInStr );
+													}
+												listOfDealID.add( dealID );
+											}
+									}
+
+								historyID = UUID.randomUUID().toString();
+
+								historyObj.setID( historyID );
+								historyObj.setAccountID( accountId );
+								historyObj.setCreatedDate( new Date() );
+								historyObj.setHistoryComments( historyComments );
+								historyObj.setType( type );
+								historyObj.setResolutionComments( resolutionComments );
+								historyObj.setTaskComments( taskComments );
+								historyObj.setLinkedTask( taskId );
+								historyObj.setOwnerName( ownerName );
+								historyObj.setOwnerID( userId );
+								historyObj.setFlagged( false );
+								historyObj.setDeleted( false );
+
+								listOfTaskId.add( taskId );
+
+								if ( !Utilities.isEmpty( listOfContactId ) )
+									historyObj.setLinkedContact( listOfContactId.get( 0 ) );
+
+								if ( !Utilities.isEmpty( listOfDealID ) )
+									historyObj.setLinkedDeal( listOfDealID.get( 0 ) );
+
+								if ( !Utilities.isEmpty( listOfAccountsId ) )
+									historyObj.setLinkedAccount( listOfAccountsId.get( 0 ) );
+
+								lListOfContactHistory.add( historyObj );
+							}
+
+						if ( lListOfContactHistory != null || !lListOfContactHistory.isEmpty() )
+							{
+								lListOfPersistedContactHistory = HistoryDAO.insertListOfHistory( lListOfContactHistory );
+							}
+
+						if ( lListOfPersistedContactHistory == null )
+							throw new NullPointerException( "History Not Persisted" );
+
+						status = RelationshipService.addHistoryIdToListOfContacts( accountId , lListOfPersistedContactHistory , listOfTaskId );
+
+						status = RelationshipService.addHistoryIdToListOfAccounts( accountId , lListOfPersistedContactHistory , listOfTaskId );
+
+						status = true;
+					}
+				catch ( Exception e )
+					{
+						status = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" );
+						errorBuilder.append( " JSON : " ).append( lJson ).append( "<br/></br>" ).append( "accountID : " ).append( accountId );
+						EmailUtil.sendExceptionMail( appID , errorBuilder , e );
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						lMap.put( "success" , status );
+						lMap.put( "history" , lListOfPersistedContactHistory );
+					}
+				return lMap;
+			}
+
+		public static Map <String , Object> insertHistoryForNewContact_v1( String appID , StringBuilder requestDetails , String accountID ,
+																			String json )
+			{
+
+				String historyID = null;
+				StringBuilder errorInfo = null;
+				boolean status = false;
+				History historyObj = null , persistedHistory = null;
+				Map <String , Object> map = new HashMap <String , Object>() , mapOfHistoryInfo = null;
+				ObjectMapper mapper = new ObjectMapper();
+
+				try
+					{
+
+						mapOfHistoryInfo = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						historyObj = constructHistoryObj_v1( accountID , mapOfHistoryInfo );
+
+						persistedHistory = DataStoreUtil.write( historyObj );
+						historyID = persistedHistory.getID();
+
+						status = true;
+
+					}
+				catch ( Exception e )
+					{
+						errorInfo = new StringBuilder();
+						status = false;
+						map.put( "error" , e.getMessage() );
+						errorInfo.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" );
+						errorInfo.append( "JSON : " ).append( json ).append( "<br/></br>" );
+						mLogger.log( Level.SEVERE , "\n " + errorInfo , e );
+						EmailUtil.sendExceptionMail( appID , errorInfo , e );
+					}
+				finally
+					{
+						map.put( "success" , status );
+						map.put( "history" , persistedHistory );
+						map.put( "id" , historyID );
+					}
+				return map;
+			}
+
+		public static boolean updateHistoryForAccount( String accountID , String accountJdoID , List <String> listOfHistoryID ) throws Exception
+			{
+
+				boolean status = false;
+				List <History> listOfHistory = null;
+
+				try
+					{
+
+						listOfHistory = HistoryDAO.getHistoryByID_v2( listOfHistoryID );
+
+						for ( History historyInItr : listOfHistory )
+							historyInItr.setLinkedAccount( accountJdoID );
+
+						HistoryDAO.updateHistory_v1( listOfHistory );
+
+						status = true;
+					}
+				finally {
+					
+				}
+				return status;
+			}
+
+		@SuppressWarnings( "rawtypes" )
+		class CreatedDateDesc implements Comparator
+			{
+				public int compare( Object obj1 , Object obj2 )
+					{
+						int result = -1;
+						Entity entity1 = null , entity2 = null;
+						History history1 = null , history2 = null;
+						long date1 = 0 , date2 = 0;
+
+						try
+							{
+								if ( obj1 instanceof Entity )
+									{
+										entity1 = (Entity) obj1;
+										date1 = ( (Date) entity1.getProperty( "createdDate" ) ).getTime();
+									}
+								else if ( obj1 instanceof History )
+									{
+										history1 = (History) obj1;
+										date1 = history1.getCreatedDate().getTime();
+									}
+
+								if ( obj2 instanceof Entity )
+									{
+										entity2 = (Entity) obj2;
+										date2 = ( (Date) entity2.getProperty( "createdDate" ) ).getTime();
+									}
+								else if ( obj2 instanceof History )
+									{
+										history2 = (History) obj2;
+										date2 = history2.getCreatedDate().getTime();
+									}
+
+								if ( date1 < date2 )
+									{
+										result = 1;
+									}
+								else if ( date1 == date2 )
+									{
+										result = 0;
+									}
+								else
+									{
+										result = -1;
+									}
+							}
+						catch ( Exception ex )
+							{
+								mLogger.log( java.util.logging.Level.SEVERE , "\n date1 : " + date1 + " \n date2 :" + date2 , ex );
+							}
+
+						return result;
+					}
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static List <History> constructBulkHistoryObj_v1( String accountID , List <Map <String , Object>> lListOfHistoryMap ) throws Exception
+			{
+
+				boolean isFlagged = false;
+
+				String historyType = "note" , historyComments = "" , resolutionComments = "" , taskComments = "" , ownerID = "" , dealIDInStr = "" , taskId = "" , historyID = "" , ownerName = "";
+				String departmentID = null;
+				Long dealID = null;
+				List <String> listOfAccountsId = new ArrayList <String>();
+				List <Long> listOfDealID = null;
+				List <Object> linkedDeals = null;
+				List <String> listOfContactID = new ArrayList <String>();
+				History history = null;
+				List <History> listHistory = new ArrayList <History>();
+
+				// SimpleDateFormat sdfDateAndTime = new SimpleDateFormat( "yyyy-MM-dd HH:mm:ss.SSSSSS" );
+				// Date createdDate = null;
+
+				for ( Map <String , Object> mapOfHistoryInfo : lListOfHistoryMap )
+					{
+
+						departmentID = null;
+						history = new History();
+
+						if ( mapOfHistoryInfo.containsKey( "linkedContacts" ) )
+							listOfContactID = (List <String>) mapOfHistoryInfo.get( "linkedContacts" );
+
+						if ( mapOfHistoryInfo.containsKey( "linkedDeals" ) )
+							{
+								listOfDealID = new ArrayList <Long>();
+								linkedDeals = (List <Object>) mapOfHistoryInfo.get( "linkedDeals" );
+
+								for ( Object dealIdInItr : linkedDeals )
+									{
+
+										dealIDInStr = String.valueOf( dealIdInItr );
+										if ( StringUtil.isBlank( dealIDInStr ) || "null".equalsIgnoreCase( dealIDInStr ) )
+											continue;
+										else
+											dealID = Long.valueOf( dealIDInStr );
+
+										listOfDealID.add( dealID );
+									}
+							}
+
+						if ( mapOfHistoryInfo.containsKey( "linkedAccounts" ) )
+							{
+								listOfAccountsId = (List <String>) mapOfHistoryInfo.get( "linkedAccounts" );
+							}
+
+						if ( mapOfHistoryInfo.containsKey( "flagged" ) )
+							isFlagged = (Boolean) mapOfHistoryInfo.get( "flagged" );
+
+						if ( mapOfHistoryInfo.containsKey( "type" ) )
+							historyType = (String) mapOfHistoryInfo.get( "type" );
+
+						if ( mapOfHistoryInfo.containsKey( "historyComments" ) )
+							historyComments = (String) mapOfHistoryInfo.get( "historyComments" );
+
+						if ( mapOfHistoryInfo.containsKey( "resolutionComments" ) )
+							resolutionComments = (String) mapOfHistoryInfo.get( "resolutionComments" );
+
+						if ( mapOfHistoryInfo.containsKey( "taskComments" ) )
+							taskComments = (String) mapOfHistoryInfo.get( "taskComments" );
+
+						/*
+						 * if( mapOfHistoryInfo.containsKey("taskStatus") ) taskStatus = ( String )
+						 * mapOfHistoryInfo.get("taskStatus");
+						 */
+
+						if ( mapOfHistoryInfo.containsKey( "ownerID" ) )
+							ownerID = (String) mapOfHistoryInfo.get( "ownerID" );
+
+						if ( mapOfHistoryInfo.containsKey( "ownerName" ) )
+							ownerName = (String) mapOfHistoryInfo.get( "ownerName" );
+
+						if ( mapOfHistoryInfo.containsKey( "taskID" ) )
+							{
+								taskId = (String) mapOfHistoryInfo.get( "taskID" );
+							}
+
+						if ( mapOfHistoryInfo.containsKey( "historyID" ) )
+							{
+								historyID = (String) mapOfHistoryInfo.get( "historyID" );
+
+								if ( StringUtil.isBlank( historyID ) )
+									throw new NullPointerException( "Invalid HistoryID" );
+							}
+						else
+							historyID = UUID.randomUUID().toString();
+
+						history.setID( historyID );
+						history.setAccountID( accountID );
+						history.setDeleted( false );
+						history.setFlagged( isFlagged );
+
+						departmentID = (String) mapOfHistoryInfo.get( "departmentID" );
+						if ( !StringUtil.isBlank( departmentID ) )
+							history.setDepartmentID( departmentID );
+
+						if ( !Utilities.isEmpty( listOfAccountsId ) )
+							history.setLinkedAccount( listOfAccountsId.get( 0 ) );
+
+						if ( !Utilities.isEmpty( listOfContactID ) )
+							history.setLinkedContact( listOfContactID.get( 0 ) );
+
+						if ( !Utilities.isEmpty( listOfDealID ) )
+							history.setLinkedDeal( listOfDealID.get( 0 ) );
+
+						if ( !StringUtil.isBlank( historyType ) )
+							history.setType( historyType );
+
+						if ( !StringUtil.isBlank( historyComments ) )
+							history.setHistoryComments( historyComments );
+
+						if ( !StringUtil.isBlank( resolutionComments ) )
+							history.setResolutionComments( resolutionComments );
+
+						if ( !StringUtil.isBlank( taskComments ) )
+							history.setTaskComments( taskComments );
+
+						if ( !StringUtil.isBlank( ownerID ) )
+							history.setOwnerID( ownerID );
+
+						if ( !StringUtil.isBlank( ownerName ) )
+							history.setOwnerName( ownerName );
+
+						if ( !StringUtil.isBlank( taskId ) )
+							{
+								history.setLinkedTask( taskId );
+							}
+
+						listHistory.add( history );
+					}
+				return listHistory;
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static Map <String , Object> insertBulkHistory( String appID , StringBuilder requestDetails , String accountID , String json )
+			{
+
+				boolean status = false;
+
+				StringBuilder errorBuilder = null;
+
+				List <History> listHistory = null;
+				List <Map <String , Object>> lListOfHistoryMap = null;
+
+				Map <String , Object> map = new HashMap <String , Object>();
+				Map <String , Object> mapInput = null;
+
+				ObjectMapper mapper = new ObjectMapper();
+
+				try
+					{
+
+						mapInput = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						lListOfHistoryMap = (List <Map <String , Object>>) mapInput.get( "history" );
+						listHistory = constructBulkHistoryObj_v1( accountID , lListOfHistoryMap );
+
+						if ( !Utilities.isEmpty( listHistory ) )
+							{
+								listHistory = HistoryDAO.insertListOfHistory( listHistory );
+							}
+						status = true;
+					}
+				catch ( Exception e )
+					{
+						status = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "accountID : " )
+								.append( accountID ).append( "<br/></br>" ).append( "json  : " ).append( json );
+						EmailUtil.sendExceptionMail( appID , errorBuilder , e );
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						map.put( "status" , status );
+						map.put( "history" , listHistory );
+					}
+				return map;
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static Map <String , Object> updateRecentItem( String appID , StringBuilder requestDetails , String accountID , String json )
+			{
+
+				boolean success = false;
+
+				Long dealID = 0L;
+
+				String queryFilter = null , dealIDInStr = null , taskID = null , type = "recentitem" , userID = null , departmentID = null , entityID = null;
+				StringBuilder errorBuilder = null;
+
+				List <String> listEntityID = null;
+				List <Long> linkedDeals = null;
+				List <Object> linkedDealsObj = null;
+				List <History> listHistory = null;
+
+				Map <String , Object> map = new HashMap <String , Object>() , mapInfo = null;
+
+				History historyObj = null;
+				ObjectMapper mapper = new ObjectMapper();
+
+				try
+					{
+
+						mapInfo = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						// mLogger.log(java.util.logging.Level.WARNING, "mapInfo : " +mapInfo);
+
+						userID = (String) mapInfo.get( "ownerID" );
+						departmentID = (String) mapInfo.get( "departmentID" );
+						departmentID = Utilities.correctToNull( departmentID );
+
+						if ( mapInfo.containsKey( "linkedAccounts" ) )
+							{
+								queryFilter = "linkedAccount";
+								listEntityID = (List <String>) mapInfo.get( "linkedAccounts" );
+							}
+						else if ( mapInfo.containsKey( "linkedDeals" ) )
+							{
+								queryFilter = "linkedDeal";
+								linkedDealsObj = (List <Object>) mapInfo.get( "linkedDeals" );
+
+								linkedDeals = new ArrayList <Long>();
+
+								for ( Object dealIdInItr : linkedDealsObj )
+									{
+
+										dealIDInStr = String.valueOf( dealIdInItr );
+										if ( StringUtil.isBlank( dealIDInStr ) || "null".equalsIgnoreCase( dealIDInStr ) )
+											continue;
+										else
+											dealID = Long.valueOf( dealIDInStr );
+
+										linkedDeals.add( dealID );
+									}
+							}
+						else if ( mapInfo.containsKey( "linkedContacts" ) )
+							{
+								queryFilter = "linkedContact";
+								listEntityID = (List <String>) mapInfo.get( "linkedContacts" );
+							}
+						else if ( mapInfo.containsKey( "taskID" ) )
+							{
+								queryFilter = "linkedTask";
+								taskID = (String) mapInfo.get( "taskID" );
+							}
+						else if ( mapInfo.containsKey( "linkedReport" ) )
+							{
+								queryFilter = "linkedReport";
+								listEntityID = (List <String>) mapInfo.get( "linkedReport" );
+							}
+
+						if ( StringUtil.isBlank( queryFilter ) )
+							{
+								// throw new
+								// NullPointerException("Entity ID to add/update recent item history is sent as null and queryFilter is null");
+								mLogger.log( java.util.logging.Level.INFO ,
+										"Entity ID to add/update recent item history is sent as null and queryFilter is null" );
+								success = true;
+								return map;
+							}
+
+						if ( !Utilities.isEmpty( listEntityID ) )
+							{
+								entityID = listEntityID.get( 0 );
+								// listHistory = HistoryDAO.getRecentHistoryByLinkedEntity(queryFilter, type, listEntityID,
+								// userID);
+								listHistory = HistoryDAO.getRecentHistoryByLinkedEntity_v2( queryFilter , type , entityID , userID , departmentID );
+							}
+						else if ( !Utilities.isEmpty( linkedDeals ) )
+							{
+								// listHistory = HistoryDAO.getRecentHistoryByLinkedDeal(queryFilter, type, linkedDeals,
+								// userID);
+								listHistory = HistoryDAO.getRecentHistoryByLinkedDeal_v2( queryFilter , type , linkedDeals , userID , departmentID );
+							}
+						else if ( !StringUtil.isBlank( taskID ) )
+							{
+								// listHistory = HistoryDAO.getRecentHistoryByTaskID(queryFilter, type, taskID, userID);
+								listHistory = HistoryDAO.getRecentHistoryByTaskID_v2( queryFilter , type , taskID , userID , departmentID );
+							}
+
+						if ( !Utilities.isEmpty( listHistory ) )
+							{
+								listHistory = HistoryDAO.updateHistory( listHistory );
+								historyObj = listHistory.get( 0 );
+							}
+						else
+							{
+								historyObj = constructHistoryObj_v1( accountID , mapInfo );
+								historyObj = DataStoreUtil.write( historyObj );
+							}
+						success = true;
+					}
+				catch ( Exception e )
+					{
+						success = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "accountID : " )
+								.append( accountID ).append( "<br/></br>" ).append( "json  : " ).append( json );
+						EmailUtil.sendExceptionMail( appID , errorBuilder , e );
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						map.put( "success" , success );
+						map.put( "recentitem" , historyObj );
+					}
+				return map;
+			}
+
+		public static Map <String , Object> getRecentHistoryByType( String appID , StringBuilder requestDetails , String accountID , String type ,
+																	String userID , String departmentID )
+			{
+
+				boolean success = false;
+
+				int i = 0;
+
+				String accountsID = null , contactID = null, category = null;
+
+				StringBuilder errorBuilder = null;
+
+				List <String> listAllAccountID = null , listAllContactID = null;
+				List <History> listHistory = null;
+				List <Account> listAccount = null;
+				List <Contact> listContact = null;
+				List<Map<String,Object>> listOfMapContact = new ArrayList<Map<String,Object>>();
+				Map <Integer , String> mapOfOrder = new HashMap <Integer , String>();
+				Map <String , Object> map = new HashMap <String , Object>() , mapAccount = new HashMap <String , Object>() , mapContact = null , mapLead = new HashMap <String , Object>();
+
+				try
+					{
+
+						departmentID = Utilities.correctToNull( departmentID );
+
+						listHistory = HistoryDAO.getRecentHistoryByType_v2( type , userID , departmentID );
+
+						if ( !Utilities.isEmpty( listHistory ) )
+							{
+
+								listAllAccountID = new ArrayList <String>();
+								listAllContactID = new ArrayList <String>();
+
+								for ( History history : listHistory )
+									{
+
+										accountsID = history.getLinkedAccount();
+										contactID = history.getLinkedContact();
+
+										if ( !StringUtil.isBlank( accountsID ) )
+											listAllAccountID.add( accountsID );
+
+										if ( !StringUtil.isBlank( contactID ) )
+											listAllContactID.add( contactID );
+
+										mapOfOrder.put( i , history.getID() );
+										i += 1;
+									}
+
+								if ( !Utilities.isEmpty( listAllAccountID ) )
+									{
+
+										listAccount = AccountDAO.getAccountsByAccountsIDs( listAllAccountID );
+
+										for ( Account account : listAccount )
+											{
+												mapAccount.put( account.getID() , account.getName() );
+											}
+									}
+
+								if ( !Utilities.isEmpty( listAllContactID ) )
+									{
+
+										String name = null;
+
+										listContact = ContactDAO.getContacts_v2( accountID , listAllContactID );
+										
+										for ( Contact contact : listContact )
+											{
+												name = Utilities.getFirstOrLastNameOrFullName( contact.getFirstName() , contact.getLastName() ,
+														contact.getFullName() );
+												category = contact.getCategory();
+												
+												if ( "lead".equalsIgnoreCase( contact.getType() ) )
+													mapLead.put(contact.getID(), name);
+												else if ( "contact".equalsIgnoreCase( contact.getType() ) ){
+													mapContact = new HashMap <String , Object>();
+													mapContact.put(contact.getID(), name);
+													mapContact.put("category", category);
+													listOfMapContact.add(mapContact);
+												}
+											}
+									}
+							}
+						success = true;
+					}
+				catch ( Exception e )
+					{
+						success = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "accountID : " )
+								.append( accountID );
+						// EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						map.put( "success" , success );
+						map.put( "history" , listHistory );
+						map.put( "account" , mapAccount );
+						map.put( "contact" , listOfMapContact );
+						map.put( "lead" , mapLead );
+					}
+				return map;
+			}
+
+		public static Map <String , Object> updateHistory( String appID , StringBuilder requestDetails , String accountID , String json )
+			{
+
+				boolean success = false, isFlagged = false;
+
+				String historyID = null , historyComments = null, flagged = null, resolutionComments = null;
+
+				Map <String , Object> map = new HashMap <>() , mapInput = null;
+
+				StringBuilder errorBuilder = null;
+				ObjectMapper mapper = new ObjectMapper();
+				History history = null;
+
+				try
+					{
+
+						mapInput = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						historyID = (String) mapInput.get( "historyID" );																					
+						history = DataStoreUtil.getObjectByID( History.class , historyID );
+
+						if ( history == null )
+							throw new NullPointerException( "Unable to fetch history in updateHistory, json : " + json );
+						
+						if( mapInput.containsKey( "historyComments" ) ) {
+							historyComments = (String) mapInput.get( "historyComments" );
+							historyComments = Utilities.correctToNull( historyComments );
+
+							if ( !StringUtil.isBlank( historyComments ) )
+								history.setHistoryComments( historyComments );
+						}
+
+						if( mapInput.containsKey( "flagged" ) ) {							
+							flagged = (String) mapInput.get( "flagged" );							
+							isFlagged = Boolean.valueOf( flagged );
+							history.setFlagged( isFlagged );
+						}
+						
+						if( mapInput.containsKey( "resolutionComments" ) ) {
+							resolutionComments = (String) mapInput.get( "resolutionComments" );
+							resolutionComments = Utilities.correctToNull( resolutionComments );
+
+							if ( !StringUtil.isBlank( resolutionComments ) )
+								history.setResolutionComments(resolutionComments);
+						}
+						if( mapInput.containsKey( "createdDate" ) ) {
+							history.setCreatedDate(new Date());
+						}
+						
+						history.setDeleted( false );
+						history = HistoryDAO.updateHistory_v1( history );
+
+						success = true;
+					}
+				catch ( Exception e )
+					{
+						success = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "accountID : " )
+								.append( accountID );
+						EmailUtil.sendExceptionMail( appID , errorBuilder , e );
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						map.put( "success" , success );
+						map.put( "history" , history );
+					}
+				return map;
+			}
+
+		@SuppressWarnings( "unchecked" )
+		public static Map <String , Object> getHistoryForEntity( String appID , StringBuilder requestDetails , String json )
+			{
+
+				boolean success = false;
+
+				String limitStr = null , cursor = null , nextCursor = null , entityID = null , entityType = null;
+				String accountID = null;
+				Long linkedDeal = null;
+
+				List <History> listHistory = null;
+
+				Map <String , Object> map = new HashMap <String , Object>() , mapInput = null , mapHistory = null;
+
+				ObjectMapper mapper = new ObjectMapper();
+				StringBuilder errorBuilder = null;
+
+				try
+					{
+
+						mLogger.log( java.util.logging.Level.INFO , "getHistoryForEntity , json : " + json );
+
+						mapInput = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+
+						accountID = (String) mapInput.get( "accountID" );
+						limitStr = (String) mapInput.get( "limit" );
+						cursor = (String) mapInput.get( "cursor" );
+						entityID = (String) mapInput.get( "entityID" );
+						entityType = (String) mapInput.get( "entityType" );
+
+						if ( "linkedDeal".equalsIgnoreCase( entityType ) )
+							linkedDeal = new Long( entityID );
+
+						mapHistory = HistoryDAO.getHistoryForEntity( accountID , entityID , limitStr , cursor , entityType , linkedDeal );
+
+						listHistory = (List <History>) mapHistory.get( "history" );
+
+						if ( !Utilities.isEmpty( listHistory ) )
+							{
+
+								for ( Iterator <History> itr = listHistory.iterator() ; itr.hasNext() ; )
+									{
+										History history = itr.next();
+
+										if ( "recentitem".equalsIgnoreCase( history.getType() ) )
+											itr.remove();
+									}
+							}
+
+						nextCursor = (String) mapHistory.get( "cursor" );
+						nextCursor = Utilities.correctToNull( nextCursor );
+
+						success = true;
+					}
+				catch ( Exception e )
+					{
+						success = false;
+						errorBuilder = new StringBuilder();
+						errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "json : " ).append( json );
+						// EmailUtil.sendExceptionMail(appID, errorBuilder, e);
+						mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+					}
+				finally
+					{
+						map.put( "success" , success );
+						map.put( "cursor" , nextCursor );
+						map.put( "history" , listHistory );
+					}
+				return map;
+			}
+
+		public static List <Entity> addHistoryOfDealToAccount( Long dealID , String accountID , Map <Key , Entity> mapOfEntity )
+			{
+
+				Entity entity = null;
+				List <Entity> listOfEntity = new ArrayList <Entity>();
+
+				for ( Map.Entry <Key , Entity> mapFromItr1 : mapOfEntity.entrySet() )
+					{
+
+						entity = mapFromItr1.getValue();
+						entity.setProperty( "linkedAccount" , accountID );
+
+						listOfEntity.add( entity );
+					}
+
+				return listOfEntity;
+			}
+		public static Map <String , Object> insertBulkHistory_v1( String appID , StringBuilder requestDetails , String accountID , String json )
+		{
+			boolean status = false;
+			StringBuilder errorBuilder = null;
+			List <History> listHistory = null;
+			Map <String , Object> map = new HashMap <String , Object>();
+			ObjectMapper mapper = new ObjectMapper();
+			mapper.configure( DeserializationConfig.Feature.FAIL_ON_UNKNOWN_PROPERTIES , false );
+
+			try
+				{
+					mLogger.log( java.util.logging.Level.INFO , " insertBulkHistory_v1 --> apikey :" + accountID + " JSON :" + json);
+
+					listHistory = mapper.readValue( json , new TypeReference <List <History>>()
+						{
+						} );
+
+					if ( !Utilities.isEmpty( listHistory ) )
+						listHistory = (List <History>) DataStoreUtil.batchWrite( listHistory );
+
+					status = true;
+				}
+			catch ( Exception e )
+				{
+					status = false;
+					errorBuilder = new StringBuilder();
+					errorBuilder.append( "RequestDetails : " ).append( requestDetails ).append( "<br/></br>" ).append( "accountID : " )
+							.append( accountID ).append( "<br/></br>" ).append( "json  : " ).append( json );
+					EmailUtil.sendExceptionMail( appID , errorBuilder , e );
+					mLogger.log( Level.SEVERE , "\n " + errorBuilder , e );
+				}
+			finally
+				{
+					map.put( "status" , status );
+					map.put( "history" , listHistory );
+				}
+			return map;
+		}
+		
+		public static Map<String,Object> getHistoryObjectsByFilters(String appID, StringBuilder requestDetails, String accountID, String json){
+			
+			boolean status = false;
+			Map<String,Object> map = new HashMap<String,Object>(), mapOfInput = null;
+			History history = null;
+			StringBuilder errorInfo = new StringBuilder();
+			ObjectMapper mapper = new ObjectMapper();
+			Map<String,History> mapOfHistory = new HashMap<String,History>();
+			Long linkedDeal = null;
+			String linkedAccount = null, linkedContact = null;
+			
+			try{
+				errorInfo.append("AppID: ").append(appID).append("<br/><br/>");
+				errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/><br/>");
+				errorInfo.append("accountID : ").append(accountID).append("<br/><br/>");
+				errorInfo.append("json : ").append(json);
+				mLogger.log(java.util.logging.Level.INFO,"getHistoryObjectsByFilters, accountID : "+accountID +"JSON:"+json);
+				
+				mapOfInput = mapper.readValue(json, new TypeReference<Map<String,Object>>() {
+				});
+				
+				if(mapOfInput.containsKey("linkedDeal"))
+					linkedDeal = Long.parseLong(String.valueOf(mapOfInput.get("linkedDeal")));
+				else if(mapOfInput.containsKey("linkedAccount"))
+					linkedAccount  = String.valueOf(mapOfInput.get("linkedAccount"));
+				else if(mapOfInput.containsKey("linkedContact"))
+					linkedContact  = String.valueOf(mapOfInput.get("linkedContact"));
+				
+				String type = (String) mapOfInput.get("type");
+				
+				List <Map <String , Object>> listOfFilterMap = new ArrayList <Map <String , Object>>();
+
+				DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "accountID" , "EQUAL" , accountID );
+				if(linkedDeal != null)
+					DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "linkedDeal" , "EQUAL" , linkedDeal );
+				else if(!StringUtil.isBlank(linkedAccount))
+					DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "linkedAccount" , "EQUAL" , linkedAccount );
+				else if(!StringUtil.isBlank(linkedContact))
+					DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "linkedContact" , "EQUAL" , linkedContact );
+				
+				DataStoreUtil.constructListOfFilterForFields( listOfFilterMap , "type" , "EQUAL" , type );
+
+				List <Entity> listOfEntity = DataStoreUtil.getEntitiesWithChunkSize( "History" , 1000 , listOfFilterMap , null );
+
+				for ( Entity entity : listOfEntity )
+				{
+					history = new History( entity );
+					mapOfHistory.put( history.getID() , history );
+				}
+				map.put("mapOfHistory", mapOfHistory);
+				
+				status = true;
+				
+			}catch(Exception e){
+				mLogger.log(java.util.logging.Level.SEVERE,"Exception in getHistoryObjectsByFilters -"+errorInfo, e);
+				EmailUtil.sendExceptionMail(appID, errorInfo, e);
+			}finally{
+				map.put("success", status);
+			}
+			return map;
+		}
+		
+		
+		public static Map<String,Object> getHistoryObjectsById(String appID, StringBuilder requestDetails, String accountID, String historyID){
+			
+			boolean status = false;
+			Map<String,Object> map = new HashMap<String,Object>();
+			History history = null;
+			StringBuilder errorInfo = new StringBuilder();
+			
+			try{
+				errorInfo.append("AppID: ").append(appID).append("<br/><br/>");
+				errorInfo.append("RequestDetails : ").append(requestDetails).append("<br/><br/>");
+				errorInfo.append("accountID : ").append(accountID).append("<br/><br/>");
+				errorInfo.append("historyID : ").append(historyID);
+				mLogger.log(java.util.logging.Level.INFO,"getHistoryObjectsById, accountID : "+accountID +"historyID:"+historyID);
+				
+				history = (History) DataStoreUtil.getObjectByID(History.class, historyID);
+				map.put("history", history);
+				
+				status = true;
+				
+			}catch(Exception e){
+				mLogger.log(java.util.logging.Level.SEVERE,"Exception in getHistoryObjectsById -"+errorInfo, e);
+				EmailUtil.sendExceptionMail(appID, errorInfo, e);
+			}finally{
+				map.put("success", status);
+			}
+			return map;
+		}
+	}

@@ -1,0 +1,698 @@
+package com.adaptavant.crm.controller;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.logging.Logger;
+
+import javax.servlet.http.HttpServletRequest;
+import javax.servlet.http.HttpServletResponse;
+
+import org.codehaus.jackson.map.ObjectMapper;
+import org.codehaus.jackson.type.TypeReference;
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseBody;
+
+import com.adaptavant.crm.service.TaskService;
+import com.adaptavant.crm.service.TaskTypeService;
+import com.adaptavant.crm.util.EmailUtil;
+import com.adaptavant.crm.util.ScopeAttributeUtility;
+import com.adaptavant.crm.util.StringUtilSales;
+import com.adaptavant.crm.util.Utilities;
+
+@Controller
+public class TaskController
+	{
+
+		private static final Logger mLogger = Logger.getLogger( TaskController.class.getPackage().getName() );		
+
+		@RequestMapping( value = "/getAllTasksForUser/{assigneeId}" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getAllTasksForOnLoadOfTaskPage( @PathVariable( "assigneeId" )
+		String assigneeId , @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestParam( value = "status" , required = true )
+		String taskStatus , @RequestParam( value = "departmentID" , required = false )
+		String departmentID , HttpServletRequest request , HttpServletResponse response )
+			{
+
+				mLogger.log( java.util.logging.Level.WARNING , "inside getAllTasksForUser, assigneeId : " + assigneeId + "\n apikey : " + accountId );
+
+				return TaskService.readTask( accountId , assigneeId , taskStatus , departmentID );
+			}
+
+		@RequestMapping( value = "/reassignBulkTasks" , method = RequestMethod.PUT )
+		public @ResponseBody
+		Map <String , Object> reassignBulkTasks( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestParam( value = "assigneeid" , required = true )
+		String assigneeId , @RequestBody
+		String taskJson )
+			{
+
+				return TaskService.reassignBulkTasks( accountId , assigneeId , taskJson );
+			}
+
+		@RequestMapping( value = "/rescheduleBulkTasks" , method = RequestMethod.PUT )
+		public @ResponseBody
+		Map <String , Object> rescheduleBulkTasks( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestBody
+		String taskJson )
+			{
+
+				return TaskService.rescheduleBulkTasks( accountId , taskJson );
+			}
+
+		@RequestMapping( value = "/resolveBulkTasks" , method = RequestMethod.PUT )
+		public @ResponseBody
+		Map <String , Object> resolveBulkTasks( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestBody
+		String taskJson )
+			{
+
+				return TaskService.resolveBulkTasks( accountId , taskJson );
+			}
+
+		@RequestMapping( value = "/getATask_v2" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getATask( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestParam( value = "taskid" , required = true )
+		String taskId , @RequestBody
+		String json )
+			{
+
+				return TaskService.getATask( accountId , taskId , null );
+			}
+
+		@RequestMapping( value = "/getTasksForTaskPage" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getTasksForTaskPage( HttpServletRequest request , @RequestBody
+		String json )
+			{
+
+				String accountID = "" , ownerID = "";
+
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+				ownerID = StringUtilSales.getSessionAttribute( request , "peopleId" );
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+
+				mapOfSessionObj.put( "accountID" , accountID );
+				mapOfSessionObj.put( "peopleId" , ownerID );
+
+				return TaskService.getTasksForTaskPage( mapOfSessionObj , json );
+			}
+
+		@RequestMapping( value = "/getTodaysNextTaskOfUser" , method = RequestMethod.GET )
+		public @ResponseBody
+		Map <String , Object> getTodaysNextTaskOfUser( HttpServletRequest request , HttpServletResponse response )
+			{
+
+				String lAccountPin = "" , lUserId = "" , lTaskIdOfCurrentTaskShown = "" , currentTaskIsRelatedTo = null , contactIdOfCurrenTask = null , accountIdOfCurrentTask = null , departmentID = null;
+				Long dealIdOfCurrentTask = null;
+
+				lAccountPin = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+				lUserId = StringUtilSales.getSessionAttribute( request , "peopleId" );
+				lTaskIdOfCurrentTaskShown = StringUtilSales.getParameter( request , "taskId" );
+				currentTaskIsRelatedTo = StringUtilSales.getParameter( request , "relatedTo" );
+				dealIdOfCurrentTask = StringUtilSales.getLongParameter( request , "dealId" );
+				contactIdOfCurrenTask = StringUtilSales.getParameter( request , "contactId" );
+				contactIdOfCurrenTask = StringUtilSales.getParameter( request , "contactId" );
+				accountIdOfCurrentTask = StringUtilSales.getParameter( request , "accountId" );
+				departmentID = StringUtilSales.getParameter( request , "departmentID" );
+
+				return TaskService.getTodaysNextTaskOfUser_v2( lAccountPin , lUserId , lTaskIdOfCurrentTaskShown , currentTaskIsRelatedTo ,
+						dealIdOfCurrentTask , contactIdOfCurrenTask , accountIdOfCurrentTask , departmentID );
+			}
+
+		@RequestMapping( value = "/deleteBulkTasks" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> deleteBulkTasks( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestBody
+		String taskJson )
+			{
+
+				return TaskService.deleteBulkTasks( accountId , taskJson );
+			}
+
+		// Called from CMS for moving Tasks from one Account to another
+		@RequestMapping( value = "/changeAccountIDForTask" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> changeAccountIDForTask( @RequestBody
+		String json )
+			{
+
+				return TaskService.changeAccountIDForTask( json );
+			}
+
+		@RequestMapping( value = "/reassignBulkTasksFromReport" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> reassignBulkTasksFromReport( @RequestBody
+		String taskJson , HttpServletRequest request , HttpServletResponse response )
+			{
+				String accountID = null;
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+
+				return TaskService.reassignBulkTasksFromReport( accountID , taskJson );
+			}
+
+		@RequestMapping( value = "/getOtherReqInfoForTask" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getOtherReqInfoForTask( @RequestBody
+		String taskJson , HttpServletRequest request )
+			{
+
+				Map <String , Object> mapOfSessionObj = null;
+				mapOfSessionObj = Utilities.getSessionValues( request );
+
+				return TaskService.getOtherReqInfoForTask( mapOfSessionObj , taskJson );
+			}
+
+		@RequestMapping( value = "/addSubscriberForTask" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> addSubscriberForTask( @RequestBody
+		String json , HttpServletRequest request )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = ScopeAttributeUtility.getSessionAttribute( request , "appUrl" , "staticContentUrl" , "AccountPIN" , "peopleId" ,
+						"salesPersonMailId" , "salesPersonName" );
+
+				return TaskService.addSubscriberForTask( mapOfSessionObj , json );
+			}
+
+		@RequestMapping( value = "/removeSubscriberForTask" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> removeSubscriberForTask( @RequestBody
+		String json , HttpServletRequest request )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = ScopeAttributeUtility.getSessionAttribute( request , "appUrl" , "staticContentUrl" , "AccountPIN" , "peopleId" ,
+						"salesPersonMailId" , "salesPersonName" );
+
+				return TaskService.removeSubscriberForTask( mapOfSessionObj , json );
+			}
+
+		@RequestMapping( value = "/restoreTask" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> restoreTask( @RequestBody
+		String json , @RequestParam( value = "taskID" , required = true )
+		String taskID , @RequestParam( value = "operation" , required = false )
+		String operation , HttpServletRequest request )
+			{
+
+				String accountID = null , userID = null;
+				Map <String , Object> mapOfSessionObj = null;
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+				userID = StringUtilSales.getSessionAttribute( request , "peopleId" );
+
+				mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj.put( "AccountPIN" , accountID );
+				mapOfSessionObj.put( "peopleId" , userID );
+
+				return TaskService.restoreTask( mapOfSessionObj , operation , taskID , json );
+			}
+
+		@RequestMapping( value = "/dissociateTaskInCMSAndAddHistoryJob" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> dissociateTaskInCMSAndAddHistoryJob( @RequestBody
+		String json )
+			{
+
+				String accountID = null;
+				Map <String , Object> mapOfInput = null;
+				ObjectMapper mapper = new ObjectMapper();
+
+				try
+					{
+						mapOfInput = mapper.readValue( json , new TypeReference <Map <String , Object>>()
+							{
+							} );
+						accountID = (String) mapOfInput.get( "accountID" );
+					}
+				catch ( Exception e )
+					{
+						String params = "Exception in TaskController, dissociateTaskInCMSAndAddHistoryJob, json : " + json;
+						mLogger.log( java.util.logging.Level.SEVERE , params , e );
+						EmailUtil.sendJavaErrorMailWithParams( params , e );
+					}
+
+				return TaskService.dissociateTaskInCMSAndAddHistory( accountID , json );
+			}
+
+		@RequestMapping( value = "/createPlainTaskEntities" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> createPlainTaskEntities( @RequestBody
+		String json )
+			{
+
+				return TaskService.createPlainTaskEntities( json );
+			}
+
+		@RequestMapping( value = "/updateTaskJob" , method = RequestMethod.POST )
+		public static void updateTaskJob( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				TaskService.updateTaskJob( json , request );
+			}
+
+		@RequestMapping( value = "/dissociateAccountsFromTask" , method = RequestMethod.POST )
+		public static void dissociateAccountsFromTask( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				TaskService.dissociateAccountsFromTask( json );
+			}
+
+		@RequestMapping( value = "/createTaskForSBFeeBack" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskForSBFeeBack( HttpServletRequest request , HttpServletResponse response ,
+														@RequestParam( value = "accountPin" , required = true )
+														String accountsID , @RequestParam( value = "login" , required = false )
+														String login , @RequestParam( value = "accountNumber" , required = true )
+														String accountNumber , @RequestParam( value = "comments" , required = true )
+														String comments , @RequestParam( value = "type" , required = true )
+														String feedBackType )
+			{
+
+				String staticContentUrl = null , json = null;
+
+				Map <String , Object> mapInfo = new HashMap <String , Object>();
+				ObjectMapper mapper = new ObjectMapper();
+
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				mapInfo.put( "accountsID" , accountsID );
+				mapInfo.put( "login" , login );
+				mapInfo.put( "accountNumber" , accountNumber );
+				mapInfo.put( "comments" , comments );
+				mapInfo.put( "feedBackType" , feedBackType );
+
+				try
+					{
+						feedBackType = StringUtilSales.urlDecode( feedBackType , "UTF-8" );
+						json = mapper.writeValueAsString( mapInfo );
+					}
+				catch ( Exception e )
+					{
+						mLogger.log( java.util.logging.Level.SEVERE , "Exception in TaskController , createTaskForSBFeeBack , accountsID : "
+								+ accountsID + "\n login : " + login + "\n acc number : " + accountNumber + "\n comments : " + comments , e );
+					}
+				return TaskService.createTaskForSBFeeBack( request , staticContentUrl , json );
+			}
+
+		@RequestMapping( value = "/transferCSMessageToTask" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> transferCSMessageToTask( HttpServletRequest request , HttpServletResponse response ,
+														@RequestParam( value = "accountPin" , required = true )
+														String accountsID , @RequestParam( value = "login" , required = false )
+														String login , @RequestParam( value = "accountNumber" , required = true )
+														String accountNumber , @RequestParam( value = "brandID" , required = true )
+														String brandID , @RequestParam( value = "comments" , required = true )
+														String comments , @RequestParam( value = "name" , required = true )
+														String name , @RequestParam( value = "phone" , required = true )
+														String phone , @RequestParam( value = "email" , required = true )
+														String email )
+			{
+
+				String staticContentUrl = null , json = null;
+
+				Map <String , Object> mapInfo = new HashMap <String , Object>();
+				ObjectMapper mapper = new ObjectMapper();
+
+				try
+					{
+						staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+						mapInfo.put( "accountsID" , accountsID );
+						mapInfo.put( "login" , login );
+						mapInfo.put( "accountNumber" , accountNumber );
+						mapInfo.put( "brandID" , brandID );
+
+						comments = StringUtilSales.urlDecode( comments , "UTF-8" );
+						name = StringUtilSales.urlDecode( name , "UTF-8" );
+						phone = StringUtilSales.urlDecode( phone , "UTF-8" );
+						email = StringUtilSales.urlDecode( email , "UTF-8" );
+
+						mapInfo.put( "comments" , comments );
+						mapInfo.put( "name" , name );
+						mapInfo.put( "phone" , phone );
+						mapInfo.put( "email" , email );
+
+						json = mapper.writeValueAsString( mapInfo );
+					}
+				catch ( Exception e )
+					{
+						mLogger.log( java.util.logging.Level.SEVERE , "Exception in TaskController , transferCSMessageToTask , accountsID : "
+								+ accountsID + "\n login : " + login + "\n acc number : " + accountNumber + "\n comments : " + comments + "\n name: "
+								+ name + "\n phone: " + phone + "\n email: " + email , e );
+					}
+
+				return TaskService.transferCSMessageToTask( request , staticContentUrl , json );
+			}
+
+		@RequestMapping( value = "/addExistingContactToTask" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> addExistingContactToTask( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = ScopeAttributeUtility.getSessionAttribute( request , "appUrl" , "staticContentUrl" , "AccountPIN" , "peopleId" ,
+						"salesPersonMailId" , "salesPersonName" );
+
+				return TaskService.addExistingContactToTask( mapOfSessionObj , json );
+			}
+
+		@RequestMapping( value = "/addExistingAccountToTask" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> addExistingAccountToTask( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = ScopeAttributeUtility.getSessionAttribute( request , "appUrl" , "staticContentUrl" , "AccountPIN" , "peopleId" ,
+						"salesPersonMailId" , "salesPersonName" );
+
+				return TaskService.addExistingAccountToTask( mapOfSessionObj , json );
+			}
+
+		@RequestMapping( value = "/removeContactFromTask" , method = RequestMethod.PUT )
+		public @ResponseBody
+		Map <String , Object> dissociateContactFromTask( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestBody
+		String json )
+			{
+
+				return TaskService.removeContactFromTask( accountId , json );
+			}
+
+		@RequestMapping( value = "/createTaskForClientFeeBack" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskForClientFeeBack( HttpServletRequest request , HttpServletResponse response ,
+															@RequestParam( value = "accountPin" , required = true )
+															String accountsID , @RequestParam( value = "login" , required = true )
+															String login , @RequestParam( value = "accountNumber" , required = true )
+															String accountNumber , @RequestParam( value = "comments" , required = true )
+															String comments , @RequestParam( value = "type" , required = true )
+															String feedBackType )
+			{
+
+				String staticContentUrl = null , json = null;
+
+				Map <String , Object> mapInfo = new HashMap <String , Object>();
+				ObjectMapper mapper = new ObjectMapper();
+
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				mapInfo.put( "accountsID" , accountsID );
+				mapInfo.put( "login" , login );
+				mapInfo.put( "accountNumber" , accountNumber );
+				mapInfo.put( "comments" , comments );
+				mapInfo.put( "feedBackType" , feedBackType );
+
+				try
+					{
+						feedBackType = StringUtilSales.urlDecode( feedBackType , "UTF-8" );
+						json = mapper.writeValueAsString( mapInfo );
+					}
+				catch ( Exception e )
+					{
+						mLogger.log( java.util.logging.Level.SEVERE , "Exception in TaskController , createTaskForClientFeeBack , accountsID : "
+								+ accountsID + "\n login : " + login + "\n acc number : " + accountNumber + "\n comments : " + comments , e );
+					}
+				return TaskService.createTaskForClientFeeBack( request , staticContentUrl , json );
+			}
+
+		@RequestMapping( value = "/updateResolveTaskInteraction" , method = RequestMethod.POST )
+		public static void updateResolveTaskInteraction( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				Integer statusCode = null;
+
+				Map <String , Object> map = null;
+
+				map = TaskService.updateResolveTaskInteraction( json , request );
+
+				if ( !Utilities.isEmpty( map ) && map.containsKey( "statusCode" ) )
+					{
+						statusCode = (Integer) map.get( "statusCode" );
+
+						if ( null != statusCode )
+							response.setStatus( statusCode );
+					}
+			}
+
+		@RequestMapping( value = "/moveTaskToExistingAccount" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> moveTaskToExistingAccount( HttpServletRequest request , @RequestBody
+		String json )
+			{
+
+				String accountID = null;
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+
+				return TaskService.moveTaskToExistingAccount( accountID , json );
+			}
+
+		@RequestMapping( value = "/{taskID}/updateContactForLinkedTask_v1" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> updateContactForLinkedTask_v1( @PathVariable
+		String taskID , @RequestBody
+		String json , HttpServletRequest request , HttpServletResponse response )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = Utilities.getSessionValues( request );
+
+				return TaskService.updateContactForLinkedTask_v1( mapOfSessionObj , taskID , json );
+			}
+
+		@RequestMapping( value = "/getATask_v3" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getATask_v3( @RequestParam( value = "apikey" , required = true )
+		String accountId , @RequestParam( value = "taskid" , required = true )
+		String taskId , @RequestBody
+		String json )
+			{
+
+				return TaskService.getATask( accountId , taskId , json );
+			}
+
+		@RequestMapping( value = "/getDsEntities" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> getDsEntities( HttpServletRequest request , HttpServletResponse response )
+			{
+
+				return TaskService.getDsEntities();
+			}
+
+		@RequestMapping( value = "/getDsEntitiyProperties" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> getDsEntities( HttpServletRequest request , HttpServletResponse response ,
+												@RequestParam( value = "entityType" , required = true )
+												String entityType )
+			{
+
+				return TaskService.getDsEntitiyProperties( entityType );
+			}
+
+		// @RequestMapping( value="/assignInboxTasks", method=RequestMethod.POST)
+		// public static @ResponseBody Map<String,Object> deleteInboxTasks(HttpServletRequest request,
+		// HttpServletResponse response) {
+		//
+		// return TaskService.assignInboxTasks("SEN42", 1000, "", "0abcfb41-d89d-496f-b397-df31eee51c0d",
+		// "486a0382-b82c-4c4c-9e15-4051f58eeaba");
+		// }
+
+		@RequestMapping( value = "/createTaskForServiceMessage" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskForServiceMessage( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				String staticContentUrl = null;
+
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				return TaskService.createTaskForServiceDeptMsgs( request , staticContentUrl , json );
+			}
+
+		@RequestMapping( value = "/updateLastUpdatedDateForTask" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> updateLastUpdatedDateForTask( @RequestParam( value = "taskID" , required = true )
+		String taskID, @RequestBody String json )
+			{
+				return TaskService.updateLastUpdatedDateForTask( taskID, json );
+			}
+
+		@RequestMapping( value = "/createTaskForWelcomeCall" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskForWelcomeCall( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				String staticContentUrl = null;
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				return TaskService.createTaskForWelcomeCall( request , staticContentUrl , json );
+			}
+
+		// This feature only for billing team (bulk task will be created by uploading csv file)
+		@RequestMapping( value = "/insertBulkTasksForAccounts" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> insertBulkTasksForAccounts( @RequestParam( value = "apikey" , required = true )
+		String apikey , HttpServletRequest request , HttpServletResponse response )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = ScopeAttributeUtility.getSessionAttribute( request , "appUrl" , "staticContentUrl" , "AccountPIN" , "peopleId" ,
+						"salesPersonMailId" , "salesPersonName" );
+
+				return TaskService.insertBulkTasksForAccounts( apikey , request , mapOfSessionObj );
+			}
+
+		@RequestMapping( value = "/insertBulkTaskJobToQueue" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> insertBulkTaskJobToQueue( @RequestBody
+		String json , HttpServletRequest request )
+			{
+
+				return TaskService.insertBulkTaskJobToQueue( json );
+			}
+
+		@RequestMapping( value = "/createTaskFromZapier" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskFromZapier( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				mLogger.log( java.util.logging.Level.WARNING , "inside createTaskFromZapier controller, json : " + json );
+
+				String staticContentUrl = null;
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				return TaskService.createTaskFromZapier( request , staticContentUrl , json );
+
+			}
+
+		@RequestMapping( value = "/getTasksForEntity" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> getTasksForEntity( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				String accountID = null;
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+
+				return TaskService.getTasksForEntity( accountID , json );
+			}
+
+		@RequestMapping( value = "/createTaskForItSupport" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> createTaskForItSupport( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				mLogger.log( java.util.logging.Level.WARNING , "inside createTaskForItSupport controller, json : " + json );
+
+				String staticContentUrl = null;
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				return TaskService.createTaskForItSupport( request , staticContentUrl , json );
+			}
+
+		@RequestMapping( value = "/itsupport" , method = RequestMethod.GET )
+		public static String loadItSupportPage( HttpServletRequest request , HttpServletResponse response )
+			{
+
+				return "itSupportForm";
+			}
+
+		@RequestMapping( value = "/processMergeTask" , method = RequestMethod.POST )
+		public static @ResponseBody
+		Map <String , Object> processMergeTask( HttpServletRequest request , HttpServletResponse response , @RequestBody
+		String json )
+			{
+
+				mLogger.log( java.util.logging.Level.WARNING , "inside processMergeTask controller, json : " + json );
+
+				return TaskService.processMergeTask( json );
+			}
+
+		@RequestMapping( value = "/createTaskForSendGiftToLead" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> triggerGiftArForLead( @RequestBody
+		String json , HttpServletRequest request , HttpServletResponse response )
+			{
+
+				Map <String , Object> mapOfSessionObj = new HashMap <String , Object>();
+				mapOfSessionObj = Utilities.getSessionValues( request );
+				String staticContentUrl = null;
+				staticContentUrl = StringUtilSales.getStringBasedOnMode( "securedStaticContent.url" );
+
+				return TaskService.createTaskForSendGiftToLead( mapOfSessionObj , json , staticContentUrl , request );
+			}
+
+		@RequestMapping( value = "/getAllTaskForAccountByDepartment_v3" , method = RequestMethod.GET )
+		public @ResponseBody
+		Map <String , Object> getAllTaskForAccountByDepartment_v3( @RequestParam( value = "limit" , required = true )
+		String limitStr , @RequestParam( value = "cursor" , required = true )
+		String cursor , @RequestParam( value = "groupID" , required = true )
+		String groupID , @RequestParam( value = "departmentID" , required = false )
+		String departmentID , @RequestParam( value = "groupCount" , required = true )
+		Integer groupCount , HttpServletRequest request , HttpServletResponse response )
+			{
+
+				String accountID = null;
+				int limit = Integer.parseInt( limitStr );
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+
+				return TaskService.getAllTaskForAccountByDepartment_v3( accountID , limit , cursor , groupID , departmentID , groupCount );
+			}
+
+		@RequestMapping( value = "/getAllAssigneeTasks_v2" , method = RequestMethod.POST )
+		public @ResponseBody
+		Map <String , Object> getAllAssigneeTasks_v2( @RequestBody
+		String json , HttpServletRequest request , HttpServletResponse response )
+			{
+				String accountID = null;
+				accountID = StringUtilSales.getSessionAttribute( request , "AccountPIN" );
+
+				return TaskService.getAllAssigneeTasks_v2( accountID , json );
+			}
+		
+		@RequestMapping( value="/createTaskType", method=RequestMethod.POST)
+		public static @ResponseBody Map<String,Object> createTaskType( HttpServletRequest request, HttpServletResponse response, 
+																										  @RequestBody String json ) {
+							
+			return TaskTypeService.createTaskType(json);	
+		}
+		
+		@RequestMapping( value="/updateTaskType", method=RequestMethod.POST)
+		public static @ResponseBody Map<String,Object> updateTaskType( HttpServletRequest request, HttpServletResponse response, 
+																										  @RequestBody String json ) {
+					
+			return TaskTypeService.updateTaskType(json);	
+		}
+		
+		@RequestMapping( value="/getAllTaskTypes", method=RequestMethod.POST)
+		public static @ResponseBody Map<String,Object> getAllTaskTypes( HttpServletRequest request, HttpServletResponse response, 
+				@RequestParam( value = "accountID" , required = true ) String accountID ) {
+					
+			return TaskTypeService.getAllTaskTypes(accountID);	
+		}
+		
+		@RequestMapping( value = "/getTaskTypeByID" , method = RequestMethod.POST )
+		public @ResponseBody Map <String , Object> getAccount(@RequestParam( value = "taskTypeID" , required = true ) String taskTypeID,																								 
+																							HttpServletRequest request ) {
+			
+				return TaskTypeService.getTaskTypeByID( taskTypeID );
+		}	
+		
+	}
